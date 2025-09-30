@@ -355,7 +355,17 @@ def Intial_data_capture(name=None, camera_id=None):
         print("\nStarting attendance system...")
         import subprocess
         import sys
-        subprocess.Popen([sys.executable, "main.py"])
+        import os
+        
+        # Get the directory where initial_data_capture.py is located
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        main_py_path = os.path.join(current_dir, "main.py")
+        
+        if os.path.exists(main_py_path):
+            subprocess.Popen([sys.executable, main_py_path])
+        else:
+            print(f"Warning: Could not find main.py in {current_dir}")
+            print("Please run main.py manually")
         return True
 
 if __name__ == "__main__":
