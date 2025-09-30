@@ -1,9 +1,15 @@
 
 import cv2
 import numpy as np
-import face_recognition
 import os
 import time
+import warnings
+
+# Suppress pkg_resources deprecation warning
+warnings.filterwarnings('ignore', category=UserWarning, module='pkg_resources')
+warnings.filterwarnings('ignore', message='pkg_resources is deprecated as an API')
+
+import face_recognition
 from datetime import datetime
 from datetime import date
 import pytz

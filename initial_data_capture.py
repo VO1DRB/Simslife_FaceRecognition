@@ -1,7 +1,13 @@
 import cv2
-import face_recognition
 import numpy as np
 import os
+import warnings
+
+# Suppress pkg_resources deprecation warning
+warnings.filterwarnings('ignore', category=UserWarning, module='pkg_resources')
+warnings.filterwarnings('ignore', message='pkg_resources is deprecated as an API')
+
+import face_recognition
 
 def calculate_eye_aspect_ratio(eye_landmarks):
     """
@@ -327,18 +333,35 @@ def Intial_data_capture(name=None, camera_id=None):
             print("Capture cancelled")
             break
     
+    # Check if all required images were captured
+    required_images = ['center.png', 'left.png', 'right.png']
+    all_images_captured = all(os.path.exists(os.path.join(person_path, img)) for img in required_images)
+    
     # Cleanup
     camera.release()
     cv2.destroyAllWindows()
     
-    # Automatically run main.py after successful capture
-    print("\nStarting attendance system...")
-    import subprocess
-    import sys
-    subprocess.Popen([sys.executable, "main.py"])
+    # If capture was not complete, delete the folder
+    if not all_images_captured:
+        try:
+            import shutil
+            shutil.rmtree(person_path)
+            print(f"\nCapture incomplete. Removed temporary data for {name}")
+            return False
+        except Exception as e:
+            print(f"Warning: Could not remove incomplete data: {e}")
+    else:
+        # Automatically run main.py after successful capture
+        print("\nStarting attendance system...")
+        import subprocess
+        import sys
+        subprocess.Popen([sys.executable, "main.py"])
+        return True
 
 if __name__ == "__main__":
     import sys
+    import shutil
+    
     if len(sys.argv) > 1:
         name = sys.argv[1]
     else:
@@ -350,10 +373,27 @@ if __name__ == "__main__":
             print("Name cannot be empty. Please try again.")
     
     try:
-        Intial_data_capture(name)
+        success = Intial_data_capture(name)
+        if not success:
+            # If registration was not successful, ensure cleanup
+            person_path = os.path.join("Attendance_data", name)
+            if os.path.exists(person_path):
+                shutil.rmtree(person_path)
+                print(f"Cleaned up incomplete registration data for {name}")
+            sys.exit(1)
     except KeyboardInterrupt:
         print("\nRegistration cancelled by user")
+        # Clean up the folder if it was created
+        person_path = os.path.join("Attendance_data", name)
+        if os.path.exists(person_path):
+            shutil.rmtree(person_path)
+            print(f"Cleaned up registration data for {name}")
         sys.exit(0)
     except Exception as e:
         print(f"\nError during registration: {e}")
+        # Clean up the folder if it was created
+        person_path = os.path.join("Attendance_data", name)
+        if os.path.exists(person_path):
+            shutil.rmtree(person_path)
+            print(f"Cleaned up registration data for {name}")
         sys.exit(1)
