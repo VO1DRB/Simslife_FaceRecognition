@@ -77,9 +77,12 @@ def detect_face_orientation(landmarks, image_shape):
         return "center"
 
 
-def Intial_data_capture(camera_id=None):
+def Intial_data_capture(name=None, camera_id=None):
     """
     Capture reference images with orientation + blink verification
+    Args:
+        name (str): Name of the user to register
+        camera_id (int): Camera device ID to use
     """
     base_path = "Attendance_data/"
     if camera_id == None:
@@ -95,19 +98,17 @@ def Intial_data_capture(camera_id=None):
         if os.path.isdir(os.path.join(base_path, item)):
             existing_names.append(item.lower())  # Store folder names in lowercase
     
-    while True:
-        Name = input("Please Enter your name: ")
-        if Name.lower() in existing_names:
-            print(f"Error: {Name} already exists in the database!")
-            retry = input("Do you want to try a different name? (yes/no): ")
-            if retry.lower() != 'yes':
-                print("Registration cancelled.")
-                return
-        else:
-            break
+    # Validate name input
+    if not name:
+        print("Error: No name provided!")
+        return False
+    
+    if name.lower() in existing_names:
+        print(f"Error: {name} already exists in the database!")
+        return False
     
     # Create person-specific directory
-    person_path = os.path.join(base_path, Name)
+    person_path = os.path.join(base_path, name)
     os.makedirs(person_path)
 
     camera = cv2.VideoCapture(camera_id)
@@ -337,4 +338,10 @@ def Intial_data_capture(camera_id=None):
     subprocess.Popen([sys.executable, "main.py"])
 
 if __name__ == "__main__":
-    Intial_data_capture()
+    import sys
+    if len(sys.argv) > 1:
+        name = sys.argv[1]
+        Intial_data_capture(name)
+    else:
+        print("Error: Please provide a name as argument")
+        sys.exit(1)
