@@ -21,6 +21,7 @@ HARDWARE_CODEC = {
 def identifyEncodings(images, classNames):
     '''
     Encoding is Recognition and comparing particular face in database or stored folder
+    with GPU acceleration when available
 
     args:
     images: list of images
@@ -28,10 +29,29 @@ def identifyEncodings(images, classNames):
     '''
     
     encodeList = []
+    use_gpu = cv2.cuda.getCudaEnabledDeviceCount() > 0
+    
     for img, name in zip(images, classNames):
-        small_frame = cv2.resize(img, (0,0), fx=0.25, fy=0.25)
-        img = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-        encodings = face_recognition.face_encodings(img)
+        if use_gpu:
+            # Upload to GPU
+            gpu_img = cv2.cuda_GpuMat()
+            gpu_img.upload(img)
+            
+            # Resize on GPU
+            gpu_small = cv2.cuda.resize(gpu_img, (0,0), fx=0.25, fy=0.25)
+            
+            # Color convert on GPU
+            gpu_rgb = cv2.cuda.cvtColor(gpu_small, cv2.COLOR_BGR2RGB)
+            
+            # Download for face_recognition
+            img = gpu_rgb.download()
+        else:
+            small_frame = cv2.resize(img, (0,0), fx=0.25, fy=0.25)
+            img = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        
+        # Use CNN model when GPU is available, HOG for CPU
+        encodings = face_recognition.face_encodings(img, model="cnn" if use_gpu else "hog")
+        
         if len(encodings) > 0:
             encode = encodings[0]
             encodeList.append(encode)
@@ -140,12 +160,27 @@ print('Encoding Complete')
 print(f'Successfully encoded {len(encodeListKnown)} faces')
 
 
-# Set CUDA device if available
+# Set CUDA device and configurations if available
 if cv2.cuda.getCudaEnabledDeviceCount() > 0:
     cv2.cuda.setDevice(0)
     print("Using GPU acceleration")
+    # Enable OpenCL
+    cv2.ocl.setUseOpenCL(True)
+    # Configure CUDA stream
+    stream = cv2.cuda_Stream()
+    # Create CUDA-enabled face detector
+    face_detector = cv2.cuda.FaceDetectorYN_create(
+        model="face_detection_yunet_2023mar.onnx",
+        config="",
+        size=(640, 480),
+        score_threshold=0.9,
+        nms_threshold=0.3,
+        top_k=5000,
+    )
 else:
     print("Using CPU processing")
+    stream = None
+    face_detector = None
 
 # Function to check if mouse click is within button bounds
 def is_mouse_click_in_button(x, y, button_pos):
@@ -171,7 +206,7 @@ def mouse_callback(event, x, y, flags, param):
             running = False
 
 #Camera capture 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
@@ -196,12 +231,37 @@ while running:
     cv2.putText(img, "Register New", (x + 5, y + 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-    # Process image
-    small_frame = cv2.resize(img, (0, 0), fx=0.25, fy=0.25)
-    rgb_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
-
-    # Detect faces
-    facesCurFrame = face_recognition.face_locations(rgb_small, model="hog")
+    # Process image with GPU acceleration if available
+    if cv2.cuda.getCudaEnabledDeviceCount() > 0:
+        # Upload image to GPU memory
+        gpu_frame = cv2.cuda_GpuMat()
+        gpu_frame.upload(img)
+        
+        # Resize on GPU
+        gpu_small = cv2.cuda.resize(gpu_frame, (0, 0), fx=0.25, fy=0.25)
+        
+        # Convert color on GPU
+        gpu_rgb = cv2.cuda.cvtColor(gpu_small, cv2.COLOR_BGR2RGB)
+        
+        # Download for face_recognition (since it doesn't support direct GPU tensors)
+        rgb_small = gpu_rgb.download()
+        
+        # Detect faces using GPU-accelerated detector if available
+        if face_detector is not None:
+            faces = face_detector.detect(gpu_frame)
+            if faces[1] is not None:
+                facesCurFrame = [(int(face[1]), int(face[0] + face[2]), 
+                                int(face[1] + face[3]), int(face[0])) 
+                               for face in faces[1]]
+            else:
+                facesCurFrame = []
+        else:
+            facesCurFrame = face_recognition.face_locations(rgb_small, model="cnn")
+    else:
+        # CPU fallback
+        small_frame = cv2.resize(img, (0, 0), fx=0.25, fy=0.25)
+        rgb_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        facesCurFrame = face_recognition.face_locations(rgb_small, model="hog")
     
     # Check number of faces and show appropriate status message
     if len(facesCurFrame) > 1:

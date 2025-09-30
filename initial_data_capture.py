@@ -86,7 +86,7 @@ def Intial_data_capture(name=None, camera_id=None):
     """
     base_path = "Attendance_data/"
     if camera_id == None:
-        camera_id = 0  # Use default camera on Windows
+        camera_id = 1  # Use default camera on Windows
     
     # Create base directory if it doesn't exist
     if not os.path.exists(base_path):
@@ -341,7 +341,19 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1:
         name = sys.argv[1]
-        Intial_data_capture(name)
     else:
-        print("Error: Please provide a name as argument")
+        # Ask for name interactively if not provided as argument
+        while True:
+            name = input("\nEnter the name to register (or press Ctrl+C to cancel): ").strip()
+            if name:  # Check if name is not empty
+                break
+            print("Name cannot be empty. Please try again.")
+    
+    try:
+        Intial_data_capture(name)
+    except KeyboardInterrupt:
+        print("\nRegistration cancelled by user")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\nError during registration: {e}")
         sys.exit(1)
