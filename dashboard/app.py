@@ -9,6 +9,78 @@ import os
 import sys
 import subprocess
 import shutil
+import json
+from utils import sound
+
+def delete_user_completely(username: str):
+    """
+    Delete user data completely from the system
+    """
+    try:
+        # 1. Delete user from API
+        api_response = api_call(f"/users/{username}", method="delete")
+        if not api_response or "status" not in api_response or api_response["status"] != "success":
+            print(f"Failed to delete user {username} from API")
+            return False
+
+        # 2. Get paths
+        root_dir = Path(__file__).parent.parent
+        dashboard_dir = Path(__file__).parent
+        
+        # 3. Delete from user_data.json files
+        json_files = [
+            root_dir / "user_data.json",
+            dashboard_dir / "user_data.json"
+        ]
+        
+        for json_path in json_files:
+            if json_path.exists():
+                try:
+                    # Read and update json
+                    with open(json_path, 'r') as f:
+                        data = json.load(f)
+                    if username in data:
+                        del data[username]
+                        # Write back
+                        with open(json_path, 'w') as f:
+                            json.dump(data, f, indent=4)
+                except Exception as e:
+                    print(f"Error with {json_path}: {e}")
+                    return False
+                    
+        # 4. Delete image files
+        attendance_dirs = [
+            root_dir / "Attendance_data",
+            dashboard_dir / "Attendance_data"
+        ]
+        
+        for att_dir in attendance_dirs:
+            if not att_dir.exists():
+                continue
+                
+            # Check for single image
+            single_img = att_dir / f"{username}.png"
+            if single_img.exists():
+                try:
+                    single_img.unlink()
+                except Exception as e:
+                    print(f"Error deleting single image: {e}")
+                    return False
+                
+            # Check for image folder
+            user_folder = att_dir / username
+            if user_folder.exists():
+                try:
+                    import shutil
+                    shutil.rmtree(user_folder)  # Recursively delete folder and contents
+                except Exception as e:
+                    print(f"Error deleting user folder: {e}")
+                    return False
+                    
+        return True
+    except Exception as e:
+        print(f"Error deleting user {username}: {e}")
+        return False
 
 # Configure page
 st.set_page_config(
@@ -16,6 +88,9 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+
+# Import pages
+from pages.attendance import show_attendance
 
 # API endpoints
 API_URL = "http://localhost:8000"
@@ -41,22 +116,154 @@ def api_call(endpoint: str, method="get", **kwargs):
         st.error(f"Error: {str(e)}")
         return None
 
+def is_checkout_time(time, assigned_shift):
+    """
+    Check if the given time is a checkout time for the shift
+    Returns: bool
+    """
+    hour = time.hour
+    minute = time.minute
+    
+    if assigned_shift == 'morning':
+        # Morning shift ends at 17:00
+        return hour == 17 and minute <= 15
+    else:
+        # Night shift ends at 22:00
+        return hour == 22 and minute <= 15
+
+def get_attendance_status(check_in_time, assigned_shift):
+    """
+    Determine attendance status based on check-in time and assigned shift
+    Returns: status (on_time, late, checkout)
+    """
+    hour = check_in_time.hour
+    minute = check_in_time.minute
+    total_minutes = hour * 60 + minute
+    
+    if assigned_shift == 'morning':
+        # Morning shift: 08:00 - 17:00, toleransi 15 menit
+        shift_start_minutes = 8 * 60  # 08:00
+        tolerance_limit = shift_start_minutes + 15  # 08:15
+        
+        if hour == 17 and minute <= 15:
+            return 'checkout'  # Checkout time for morning shift
+        
+        return 'on_time' if total_minutes <= tolerance_limit else 'late'
+    else:
+        # Night shift: 17:00 - 22:00, toleransi 15 menit
+        shift_start_minutes = 17 * 60  # 17:00
+        tolerance_limit = shift_start_minutes + 15  # 17:15
+        
+        if hour == 22 and minute <= 15:
+            return 'checkout'  # Checkout time for night shift
+            
+        return 'on_time' if total_minutes <= tolerance_limit else 'late'
+
+def determine_actual_shift(check_in_time):
+    """
+    Determine the actual shift based on check-in time
+    Returns: actual_shift (morning or night)
+    """
+    hour = check_in_time.hour
+    return 'morning' if 8 <= hour < 17 else 'night'
+
 def get_today_attendance():
     try:
-        response = api_call("/attendance/today")
-        if response and "data" in response:
-            df = pd.DataFrame(response["data"])
-            # Jika df tidak kosong tapi tidak memiliki kolom yang diperlukan, tambahkan dengan nilai default
-            if not df.empty:
-                if 'shift' not in df.columns:
-                    df['shift'] = 'morning'  # default shift
-                if 'status' not in df.columns:
-                    df['status'] = 'on_time'  # default status
-            return df
-        return pd.DataFrame(columns=['employee_name', 'shift', 'status', 'check_in', 'check_out'])
-    except:
-        st.error("Gagal mengambil data absensi hari ini")
-        return pd.DataFrame(columns=['employee_name', 'shift', 'status', 'check_in', 'check_out'])
+        # Load user data for shift information
+        user_data_file = Path(__file__).parent.parent / "user_data.json"
+        user_shifts = {}
+        if user_data_file.exists():
+            import json
+            try:
+                with open(user_data_file, 'r') as f:
+                    data = json.load(f)
+                user_shifts = {name: info['shift'] for name, info in data.items()}
+            except:
+                st.warning("⚠️ Could not load user shift data")
+        
+        # Get attendance data
+        attendance_dir = Path(__file__).parent.parent / "Attendance_Entry"
+        today_file = attendance_dir / f"Attendance_{datetime.now().strftime('%y_%m_%d')}.csv"
+        
+        if today_file.exists():
+            try:
+                df = pd.read_csv(today_file)
+                if not df.empty:
+                    # Check if we have the required columns
+                    required_cols = {'Name', 'Time'}
+                    if not all(col in df.columns for col in required_cols):
+                        # Try alternate column names
+                        if 'employee_name' in df.columns and 'check_in' in df.columns:
+                            df = df.rename(columns={
+                                'employee_name': 'Name',
+                                'check_in': 'Time'
+                            })
+                    
+                    # Process each attendance entry
+                    processed_data = []
+                    for _, row in df.iterrows():
+                        # Get employee name and time
+                        employee_name = row['Name']
+                        check_in_str = row['Time']
+                        
+                        try:
+                            # Parse the date and time
+                            check_in_time = None
+                            if 'Date' in row:
+                                # Combine date and time
+                                check_in_time = pd.to_datetime(f"{row['Date']} {row['Time']}")
+                            else:
+                                # Just parse the time string
+                                check_in_time = pd.to_datetime(check_in_str)
+                            
+                            # Get assigned shift from user data, default to morning if not found
+                            assigned_shift = user_shifts.get(employee_name, 'morning')
+                            
+                            # Get status first to check if it's a checkout
+                            status = get_attendance_status(check_in_time.time(), assigned_shift)
+                            
+                            # If it's a checkout time, try to update existing entry
+                            if status == 'checkout':
+                                # Look for matching entry to update checkout time
+                                matching_entry = next(
+                                    (entry for entry in processed_data 
+                                     if entry['employee_name'] == employee_name 
+                                     and entry['assigned_shift'] == assigned_shift
+                                     and 'check_out' not in entry),
+                                    None
+                                )
+                                if matching_entry:
+                                    matching_entry['check_out'] = check_in_time
+                                    continue  # Skip adding new entry
+                            
+                            # Determine actual shift based on check-in time
+                            actual_shift = determine_actual_shift(check_in_time.time())
+                            
+                            # Only add entry if it's not a checkout time
+                            if status != 'checkout':
+                                processed_data.append({
+                                    'employee_name': employee_name,
+                                    'check_in': check_in_time,
+                                    'check_out': None,
+                                    'assigned_shift': assigned_shift,
+                                    'actual_shift': actual_shift,
+                                    'status': status
+                                })
+                        except Exception as e:
+                            st.warning(f"Could not process attendance for {employee_name}: {str(e)}")
+                            continue
+                    
+                    if processed_data:
+                        return pd.DataFrame(processed_data)
+            except Exception as e:
+                st.warning(f"Error reading attendance file: {str(e)}")
+                
+        # Return empty DataFrame if no data or errors
+        return pd.DataFrame(columns=['employee_name', 'check_in', 'check_out', 'assigned_shift', 'actual_shift', 'status'])
+    
+    except Exception as e:
+        st.error(f"Gagal mengambil data absensi hari ini: {str(e)}")
+        return pd.DataFrame(columns=['employee_name', 'check_in', 'check_out', 'assigned_shift', 'actual_shift', 'status'])
 
 def get_all_attendance():
     try:
@@ -86,6 +293,7 @@ def get_registered_users():
 # Import modules
 from registration import show_user_registration, navigate_to
 from user_management import show_user_management
+from pages.attendance import show_attendance
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -107,7 +315,7 @@ def main():
     st.sidebar.title("Navigation")
     
     # Navigation options
-    pages = ["Overview", "Daily Statistics", "User Management", "Register New User"]
+    pages = ["Overview", "Daily Statistics", "User Management", "Register New User", "Attendance"]
     
     # Use session state for the radio button
     current_page_index = pages.index(st.session_state['current_page'])
@@ -127,6 +335,8 @@ def main():
         show_user_management()
     elif st.session_state['current_page'] == "Register New User":
         show_user_registration()
+    elif st.session_state['current_page'] == "Attendance":
+        show_attendance()
 
 def show_overview():
     st.header("Overview Hari Ini")
@@ -142,21 +352,22 @@ def show_overview():
     with col1:
         st.metric("Total Hadir", total_present)
     
-    # Initialize counters
+    # Initialize counters for actual shifts
     morning_count = 0
     night_count = 0
     
-    if not df.empty and 'shift' in df.columns:
-        morning_shift = df[df['shift'] == 'morning']
-        night_shift = df[df['shift'] == 'night']
+    if not df.empty:
+        # Count by actual shift
+        morning_shift = df[df['actual_shift'] == 'morning']
+        night_shift = df[df['actual_shift'] == 'night']
         
         morning_count = len(morning_shift)
         night_count = len(night_shift)
     
     with col2:
-        st.metric("Shift Pagi", morning_count)
+        st.metric("Hadir di Shift Pagi", morning_count)
     with col3:
-        st.metric("Shift Malam", night_count)
+        st.metric("Hadir di Shift Malam", night_count)
     
     # Get device status
     devices = response.get('data', []) if response else []
@@ -167,46 +378,130 @@ def show_overview():
     with col4:
         st.metric("Perangkat Aktif", active_devices)
     
-    # Display shift details
-    st.subheader("Today's Attendance by Shift")
+    # Display comprehensive shift details
+    st.subheader("Detail Absensi Hari Ini")
     if not df.empty:
-        tabs = st.tabs(["Morning Shift", "Night Shift"])
+        tabs = st.tabs(["Shift Pagi", "Shift Malam"])
         
+        # Morning Shift Tab
         with tabs[0]:
-            morning_df = df[df['shift'] == 'morning']
+            # Get all employees who are assigned to morning shift
+            morning_df = df[df['assigned_shift'] == 'morning']
             if not morning_df.empty:
+                # Status counts
                 on_time = len(morning_df[morning_df['status'] == 'on_time'])
                 late = len(morning_df[morning_df['status'] == 'late'])
-                invalid = len(morning_df[morning_df['status'] == 'invalid'])
+                checked_out = len(morning_df[morning_df['check_out'].notna()])
+                pending_checkout = len(morning_df[morning_df['check_out'].isna()])
                 
-                mcol1, mcol2, mcol3 = st.columns(3)
+                mcol1, mcol2, mcol3, mcol4 = st.columns(4)
                 with mcol1:
-                    st.metric("On Time", on_time)
+                    st.metric("Tepat Waktu", on_time)
                 with mcol2:
-                    st.metric("Late", late)
+                    st.metric("Terlambat", late)
                 with mcol3:
-                    st.metric("Invalid", invalid)
+                    st.metric("Sudah Checkout", checked_out)
+                with mcol4:
+                    st.metric("Belum Checkout", pending_checkout)
                     
-                st.dataframe(morning_df[['employee_name', 'check_in', 'check_out', 'status']])
+                # Add late time details if any
+                if late > 0:
+                    late_df = morning_df[morning_df['status'] == 'late'].copy()
+                    st.warning("Detail Keterlambatan:")
+                    # Calculate late minutes for each entry
+                    late_df['jam_masuk'] = pd.to_datetime(late_df['check_in']).dt.strftime('%H:%M')
+                    late_df['keterlambatan'] = (pd.to_datetime(late_df['check_in']).dt.hour * 60 + 
+                                              pd.to_datetime(late_df['check_in']).dt.minute - 
+                                              (8 * 60 + 15))  # Minutes after 08:15
+                    late_df['keterlambatan'] = late_df['keterlambatan'].astype(str) + ' menit'
+                    # Display table
+                    st.dataframe(
+                        late_df[['employee_name', 'jam_masuk', 'keterlambatan']].rename(
+                            columns={
+                                'employee_name': 'Nama Karyawan',
+                                'jam_masuk': 'Jam Masuk',
+                                'keterlambatan': 'Keterlambatan'
+                            }
+                        ),
+                        hide_index=True,
+                        width="stretch"
+                    )
+                
+                # Format check-in time
+                display_df = morning_df.copy()
+                display_df['check_in'] = pd.to_datetime(display_df['check_in']).dt.strftime('%H:%M:%S')
+                if 'check_out' in display_df.columns:
+                    display_df['check_out'] = pd.to_datetime(display_df['check_out']).dt.strftime('%H:%M:%S')
+                
+                # Show detailed table
+                st.dataframe(
+                    display_df[[
+                        'employee_name', 'check_in', 'check_out',
+                        'actual_shift', 'status'
+                    ]].rename(columns={
+                        'employee_name': 'Nama',
+                        'check_in': 'Jam Masuk',
+                        'check_out': 'Jam Keluar',
+                        'actual_shift': 'Shift Aktual',
+                        'status': 'Status'
+                    }),
+                    width="stretch"
+                )
             else:
-                st.info("No morning shift attendance yet")
+                st.info("Belum ada absensi untuk shift pagi")
         
+        # Night Shift Tab
         with tabs[1]:
-            night_df = df[df['shift'] == 'night']
+            # Get all employees who are assigned to night shift
+            night_df = df[df['assigned_shift'] == 'night']
             if not night_df.empty:
+                # Status counts
                 on_time = len(night_df[night_df['status'] == 'on_time'])
                 late = len(night_df[night_df['status'] == 'late'])
-                invalid = len(night_df[night_df['status'] == 'invalid'])
+                checked_out = len(night_df[night_df['check_out'].notna()])
+                pending_checkout = len(night_df[night_df['check_out'].isna()])
                 
-                ncol1, ncol2, ncol3 = st.columns(3)
+                ncol1, ncol2, ncol3, ncol4 = st.columns(4)
                 with ncol1:
-                    st.metric("On Time", on_time)
+                    st.metric("Tepat Waktu", on_time)
                 with ncol2:
-                    st.metric("Late", late)
+                    st.metric("Terlambat", late)
                 with ncol3:
-                    st.metric("Invalid", invalid)
+                    st.metric("Sudah Checkout", checked_out)
+                with ncol4:
+                    st.metric("Belum Checkout", pending_checkout)
                     
-                st.dataframe(night_df[['employee_name', 'check_in', 'check_out', 'status']])
+                # Add late time details if any
+                if late > 0:
+                    late_df = night_df[night_df['status'] == 'late']
+                    st.warning("Detail Keterlambatan:")
+                    for _, row in late_df.iterrows():
+                        check_in = pd.to_datetime(row['check_in']).strftime('%H:%M')
+                        minutes_late = (pd.to_datetime(row['check_in']).hour * 60 + 
+                                     pd.to_datetime(row['check_in']).minute - 
+                                     (17 * 60 + 15))  # Minutes after 17:15
+                        st.write(f"👤 {row['employee_name']}: {check_in} ({minutes_late} menit terlambat)")
+                
+                # Format check-in time
+                display_df = night_df.copy()
+                display_df['check_in'] = pd.to_datetime(display_df['check_in']).dt.strftime('%H:%M:%S')
+                if 'check_out' in display_df.columns:
+                    display_df['check_out'] = pd.to_datetime(display_df['check_out']).dt.strftime('%H:%M:%S')
+                
+                # Show detailed table
+                st.dataframe(
+                    display_df[[
+                        'employee_name', 'check_in', 'check_out',
+                        'actual_shift', 'status'
+                    ]].rename(columns={
+                        'employee_name': 'Nama',
+                        'check_in': 'Jam Masuk',
+                        'check_out': 'Jam Keluar',
+                        'actual_shift': 'Shift Aktual',
+                        'status': 'Status'
+                    }),
+                    width="stretch"
+                )
             else:
                 st.info("No night shift attendance yet")
     else:
@@ -487,7 +782,7 @@ def show_daily_statistics():
                 'Tepat Waktu': st.column_config.NumberColumn('Tepat Waktu', format='%d'),
                 'Terlambat': st.column_config.NumberColumn('Terlambat', format='%d')
             },
-            use_container_width=True,
+            width="stretch",
             hide_index=True
         )
         
@@ -513,7 +808,7 @@ def show_daily_statistics():
             if not filtered_df.empty:
                 st.dataframe(
                     filtered_df.sort_values(by=date_column, ascending=False),
-                    use_container_width=True
+                    width="stretch"
                 )
                 
                 # Summary metrics
@@ -615,30 +910,66 @@ def show_user_management():
                             st.image(str(image_path), width=150)
                             st.markdown(f'<div class="user-name">{user["name"]}</div>', unsafe_allow_html=True)
                             st.markdown(f'<div class="user-info">{user.get("role", "Employee").title()}</div>', unsafe_allow_html=True)
-                            st.markdown(f'<div class="user-info">Shift {user.get("shift", "Not Set").title()}</div>', unsafe_allow_html=True)
-                            st.markdown('<div class="status-active">● Active</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="user-info">Shift: {user.get("shift", "Not Set").title()}</div>', unsafe_allow_html=True)
                             st.markdown('<div class="image-type">Single Image</div>', unsafe_allow_html=True)
+                            st.markdown('<div class="status-active">● Active</div>', unsafe_allow_html=True)
+                                    
+                            # Delete button and confirmation
+                            if st.button("🗑️ Delete User", key=f"del_img_single_{user['name']}_{idx}"):
+                                st.warning(f"Are you sure you want to delete user {user['name']}? This will remove all data and images.")
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    if st.button("✅ Yes", key=f"confirm_del_single_{user['name']}_{idx}"):
+                                        # Delete user completely
+                                        success, message = delete_user_completely(user['name'])
+                                        if success:
+                                            st.success(f"✅ {message}")
+                                            time.sleep(1)  # Give time for the message to show
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ {message}")
+                                with col2:
+                                    if st.button("❌ No", key=f"cancel_del_single_{user['name']}_{idx}"):
+                                        st.rerun()
                             st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.info("Tidak ada user dengan single image")
                 
         with tab2:
             if multiple_image_users:
-                cols = st.columns(4)
+                cols = st.columns(4)  # Create 4 columns for the grid layout
+                
+                # Process each user
                 for idx, item in enumerate(multiple_image_users):
                     user = item["user"]
                     image_path = item["image_path"]
+                    folder_path = image_path.parent  # Get the parent folder for multiple images
                     col = cols[idx % 4]
                     with col:
                         with st.container():
-                            # Card container
                             st.markdown('<div class="user-card">', unsafe_allow_html=True)
                             st.image(str(image_path), width=150)
                             st.markdown(f'<div class="user-name">{user["name"]}</div>', unsafe_allow_html=True)
                             st.markdown(f'<div class="user-info">{user.get("role", "Employee").title()}</div>', unsafe_allow_html=True)
-                            st.markdown(f'<div class="user-info">Shift {user.get("shift", "Not Set").title()}</div>', unsafe_allow_html=True)
-                            st.markdown('<div class="status-active">● Active</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="user-info">Shift: {user.get("shift", "Not Set").title()}</div>', unsafe_allow_html=True)
                             st.markdown('<div class="image-type">Multiple Images</div>', unsafe_allow_html=True)
+                            st.markdown('<div class="status-active">● Active</div>', unsafe_allow_html=True)
+                            # Delete button and confirmation
+                            if st.button("🗑️ Delete Images", key=f"del_img_multi_{user['name']}_{idx}"):
+                                st.warning(f"Are you sure you want to delete images for {user['name']}?")
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    if st.button("✅ Yes", key=f"confirm_del_multi_{user['name']}_{idx}"):
+                                        try:
+                                            # Delete user completely
+                                            if delete_user_completely(user['name']):
+                                                st.success(f"✅ User {user['name']} deleted")
+                                            st.rerun()
+                                        except:
+                                            st.rerun()  # Silently handle errors
+                                with col2:
+                                    if st.button("❌ No", key=f"cancel_del_multi_{user['name']}_{idx}"):
+                                        st.rerun()
                             st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.info("Tidak ada user dengan multiple images")
@@ -672,7 +1003,7 @@ def show_user_management():
         </style>
         """, unsafe_allow_html=True)
         
-        if st.button("➕ Tambah User Baru", use_container_width=True):
+        if st.button("➕ Tambah User Baru", width="stretch"):
             navigate_to("Register New User")
 
 class RegistrationError(Exception):

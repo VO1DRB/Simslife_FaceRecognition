@@ -92,7 +92,7 @@ def Intial_data_capture(name=None, camera_id=None):
     """
     base_path = "Attendance_data/"
     if camera_id == None:
-        camera_id = 1  # Use default camera on Windows
+        camera_id = 0  # Use default camera on Windows
     
     # Create base directory if it doesn't exist
     if not os.path.exists(base_path):
@@ -351,21 +351,8 @@ def Intial_data_capture(name=None, camera_id=None):
         except Exception as e:
             print(f"Warning: Could not remove incomplete data: {e}")
     else:
-        # Automatically run main.py after successful capture
-        print("\nStarting attendance system...")
-        import subprocess
-        import sys
-        import os
-        
-        # Get the directory where initial_data_capture.py is located
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        main_py_path = os.path.join(current_dir, "main.py")
-        
-        if os.path.exists(main_py_path):
-            subprocess.Popen([sys.executable, main_py_path])
-        else:
-            print(f"Warning: Could not find main.py in {current_dir}")
-            print("Please run main.py manually")
+        print("\nRegistration completed successfully!")
+        print("You can now use the Attendance page to mark your attendance.")
         return True
 
 if __name__ == "__main__":
@@ -406,4 +393,3 @@ if __name__ == "__main__":
         if os.path.exists(person_path):
             shutil.rmtree(person_path)
             print(f"Cleaned up registration data for {name}")
-        sys.exit(1)

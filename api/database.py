@@ -59,30 +59,54 @@ class AttendanceDB:
         conn.commit()
         conn.close()
         
-    def validate_shift_time(self, check_time: time) -> tuple[str, str]:
-        """Validate check time and return shift and status"""
+    def validate_shift_time(self, check_time: time, employee_name: str) -> tuple[str, str]:
+        """Validate check time and return shift and status based on employee's registered shift"""
         morning_start = time(8, 0)
         morning_end = time(16, 0)
         night_start = time(16, 0)
         night_end = time(22, 0)
         
-        if morning_start <= check_time < morning_end:
-            shift = "morning"
-            if check_time > time(8, 15):  # 15 minutes tolerance
-                status = "late"
-            else:
-                status = "on_time"
-        elif night_start <= check_time < night_end:
-            shift = "night"
-            if check_time > time(16, 15):  # 15 minutes tolerance
-                status = "late"
-            else:
-                status = "on_time"
+        # Get employee's registered shift
+        conn = sqlite3.connect(str(self.db_path))
+        c = conn.cursor()
+        c.execute('SELECT shift FROM users WHERE username = ?', (employee_name,))
+        result = c.fetchone()
+        conn.close()
+        
+        registered_shift = result[0] if result else None
+        
+        if registered_shift == 'morning':
+            if morning_start <= check_time < morning_end:
+                if check_time > time(8, 15):  # 15 minutes tolerance
+                    return "morning", "late"
+                return "morning", "on_time"
+            return "morning", "invalid"  # Wrong time for morning shift
+        
+        elif registered_shift == 'night':
+            if night_start <= check_time < night_end:
+                if check_time > time(16, 15):  # 15 minutes tolerance
+                    return "night", "late"
+                return "night", "on_time"
+            return "night", "invalid"  # Wrong time for night shift
+        
         else:
-            shift = "unknown"
-            status = "invalid"
-            
-        return shift, status
+            # Fallback if shift not registered
+            if morning_start <= check_time < morning_end:
+                shift = "morning"
+                if check_time > time(8, 15):
+                    status = "late"
+                else:
+                    status = "on_time"
+            elif night_start <= check_time < night_end:
+                shift = "night"
+                if check_time > time(16, 15):
+                    status = "late"
+                else:
+                    status = "on_time"
+            else:
+                shift = "unknown"
+                status = "invalid"
+            return shift, status
         
     def mark_attendance(self, employee_name: str, device_id: str):
         """Mark attendance with shift validation"""

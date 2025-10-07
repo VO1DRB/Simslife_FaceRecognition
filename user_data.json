@@ -1,0 +1,30 @@
+{
+    "michael": {
+        "shift": "morning",
+        "role": "employee"
+    },
+    "mikhael": {
+        "shift": "morning",
+        "role": "employee"
+    },
+    "sheva": {
+        "shift": "night",
+        "role": "employee"
+    },
+    "sep": {
+        "shift": "night",
+        "role": "employee"
+    },
+    "gangkipik": {
+        "shift": "morning",
+        "role": "employee"
+    },
+    "qwerty": {
+        "shift": "night",
+        "role": "employee"
+    },
+    "sulis": {
+        "shift": "night",
+        "role": "employee"
+    }
+}

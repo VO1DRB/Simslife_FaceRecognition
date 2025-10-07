@@ -4,23 +4,33 @@ import numpy as np
 import os
 import time
 import warnings
+from dashboard.utils.attendance import get_shift_status, should_auto_checkout
+from dashboard.utils import sound
 
 # Suppress pkg_resources deprecation warning
 warnings.filterwarnings('ignore', category=UserWarning, module='pkg_resources')
 warnings.filterwarnings('ignore', message='pkg_resources is deprecated as an API')
 
 import face_recognition
-from datetime import datetime
-from datetime import date
+from datetime import datetime, date
 import pytz
 import csv
 
+# Constants
+ATTENDANCE_TIMEOUT = 5  # Seconds to wait after successful recognition
+CONFIDENCE_THRESHOLD = 0.6  # Minimum confidence for face recognition
+
 # Hardware acceleration configuration
 HARDWARE_CODEC = {
-    'backend': cv2.CAP_FFMPEG,
-    'codec': cv2.VideoWriter_fourcc(*'H264'),  # H.264 codec for NVIDIA acceleration
+    'backend': cv2.CAP_DSHOW,  # Use DirectShow for better Windows compatibility
+    'codec': cv2.VideoWriter_fourcc(*'MJPG'),
     'buffersize': 1024*64,  # 64KB buffer
-    'extra_options': {}
+    'extra_options': {
+        'video_source': 0,
+        'frame_width': 640,
+        'frame_height': 480,
+        'fps': 30
+    }
 }
 
 
@@ -68,14 +78,46 @@ def identifyEncodings(images, classNames):
             continue
     return encodeList
 
-def markAttendance(name):
+def get_last_attendance(name: str) -> tuple[bool, str, datetime]:
+    """
+    Check if user has already checked in today and return their last action
+    
+    Returns:
+        tuple[bool, str, datetime]: (has_attendance, last_action, last_time)
+    """
+    try:
+        current_date = datetime.now().strftime("%y_%m_%d")
+        attendance_file = f'Attendance_Entry/Attendance_{current_date}.csv'
+        
+        if not os.path.exists(attendance_file):
+            return False, None, None
+            
+        with open(attendance_file, 'r') as f:
+            reader = csv.DictReader(f)
+            user_entries = [row for row in reader if row["Name"] == name]
+            
+            if not user_entries:
+                return False, None, None
+                
+            last_entry = user_entries[-1]
+            last_time = datetime.strptime(f"{last_entry['Date']} {last_entry['Time']}", "%y_%m_%d %H:%M:%S")
+            return True, last_entry["Action"], last_time
+            
+    except Exception as e:
+        print(f"Error checking attendance: {e}")
+        return False, None, None
+
+def markAttendance(name: str, action: str = "checkin"):
     '''
     This function handles attendance marking in CSV file and notifies the API
     
     args:
     name: str
+    action: str, either "checkin" or "checkout"
     '''
     try:
+        import requests
+        
         # Ensure the directory exists
         os.makedirs("Attendance_Entry", exist_ok=True)
         
@@ -84,11 +126,73 @@ def markAttendance(name):
         current_date = now.strftime("%y_%m_%d")
         attendance_file = f'Attendance_Entry/Attendance_{current_date}.csv'
         
+        # Check current status
+        has_attendance, last_action, last_time = get_last_attendance(name)
+        
+        # Validate action
+        if has_attendance:
+            if action == "checkin" and last_action == "checkin":
+                print(f"Warning: {name} is already checked in")
+                return False
+            elif action == "checkout" and last_action == "checkout":
+                print(f"Warning: {name} is already checked out")
+                return False
+        elif action == "checkout":
+            print(f"Warning: Cannot checkout {name} - no check-in record found")
+            return False
+            
+        # Get shift and status
+        if action == "checkin":
+            shift, status = get_shift_status(now)
+        else:  # checkout
+            shift, _ = get_shift_status(last_time)  # Use check-in time to determine shift
+            status = "early" if should_auto_checkout(last_time, now) else "ontime"
+        
         # Create file with headers if it doesn't exist
         if not os.path.exists(attendance_file):
             with open(attendance_file, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(["Name", "Time", "Date"])
+                writer.writerow(["Name", "Time", "Date", "Action", "Status", "Shift"])
+                
+        # Append attendance record
+        dtString = now.strftime("%H:%M:%S")
+        with open(attendance_file, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([name, dtString, current_date, action, status, shift])
+            
+        # Notify API
+        try:
+            record = {
+                "employee_name": name,
+                "date": now.strftime("%Y-%m-%d"),
+                "shift": shift,
+                "status": status,
+                "device_id": "MAIN_CAMERA"
+            }
+            
+            if action == "checkin":
+                record["check_in"] = now.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                record["check_out"] = now.strftime("%Y-%m-%d %H:%M:%S")
+                
+            response = requests.post(
+                "http://localhost:8000/attendance",
+                json=record
+            )
+            
+            if response.status_code != 200:
+                print(f"Warning: Failed to notify API: {response.text}")
+                
+        except Exception as e:
+            print(f"Warning: Failed to notify API: {e}")
+            
+        print(f"Marked {action} for {name}")
+        sound.play_success()  # Play success sound
+        return True
+            
+    except Exception as e:
+        print(f"Error marking attendance: {e}")
+        return False
         
         # Record the attendance
         time_str = now.strftime('%H:%M:%S')
@@ -204,17 +308,20 @@ def mouse_callback(event, x, y, flags, param):
             # Use subprocess.run to wait for the process to complete
             import subprocess
             import sys
-            try:
+            try:    
                 subprocess.run([sys.executable, "initial_data_capture.py"], check=True)
             except subprocess.CalledProcessError as e:
                 print(f"Error running registration: {e}")
             global running
             running = False
 
-#Camera capture 
-cap = cv2.VideoCapture(1)
+# Camera capture with optimized settings
+cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Use DirectShow on Windows for better performance
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FPS, 30)  # Set FPS to 30
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer size for lower latency
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))  # Use MJPG codec for better performance
 
 # Create window and set mouse callback
 cv2.namedWindow('Attendance System')
@@ -223,7 +330,9 @@ cv2.setMouseCallback('Attendance System', mouse_callback, button_pos)
 
 last_detected_name = None
 last_detect_time = 0
+frame_count = 0
 CACHE_TIME = 2.0  # detik, cache nama wajah biar gak dihitung ulang tiap frame
+PROCESS_EVERY_N_FRAMES = 2  # Only process every nth frame
 running = True
 
 while running:
@@ -300,6 +409,16 @@ while running:
                     cv2.rectangle(img, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
                     cv2.putText(img, name, (left + 6, bottom - 6),
                             cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
+                            
+                    # Show success message
+                    cv2.putText(img, "Attendance Marked!", (10, 60),
+                            cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 255, 0), 2)
+                    
+                    # Display the final frame for 2 seconds
+                    cv2.imshow('Attendance System', img)
+                    cv2.waitKey(2000)
+                    running = False  # Stop the main loop
+                    break
 
     # Display the result
     cv2.imshow('Attendance System', img)
