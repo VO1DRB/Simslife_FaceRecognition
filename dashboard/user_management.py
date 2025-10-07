@@ -46,13 +46,35 @@ def show_user_management():
         user_name = img_path.stem
         with cols[col_idx]:
             st.image(str(img_path), caption=user_name, width="stretch")
-            if st.button("Hapus", key=f"del_{user_name}"):
-                try:
-                    os.remove(img_path)
-                    st.success(f"✅ User {user_name} berhasil dihapus")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ Gagal menghapus user: {str(e)}")
+            if st.button("🗑️ Hapus User", key=f"del_btn_{user_name}", type="secondary"):
+                st.warning(f"⚠️ Yakin ingin menghapus user '{user_name}'?")
+                confirm_col1, confirm_col2 = st.columns(2)
+                with confirm_col1:
+                    if st.button("✅ Ya, Hapus", key=f"confirm_{user_name}", type="primary"):
+                        try:
+                            # Delete from Attendance_data
+                            os.remove(img_path)
+                            # Also delete from user_data.json if exists
+                            user_data_file = attendance_dir.parent / "user_data.json"
+                            if user_data_file.exists():
+                                import json
+                                try:
+                                    with open(user_data_file, 'r') as f:
+                                        data = json.load(f)
+                                    if user_name in data:
+                                        del data[user_name]
+                                        with open(user_data_file, 'w') as f:
+                                            json.dump(data, f, indent=4)
+                                except:
+                                    pass  # Ignore user_data.json errors
+                            st.success(f"✅ User {user_name} berhasil dihapus")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Gagal menghapus user: {str(e)}")
+                with confirm_col2:
+                    if st.button("❌ Batal", key=f"cancel_{user_name}"):
+                        st.rerun()
         col_idx = (col_idx + 1) % 4
     
     # Show folders
@@ -64,16 +86,32 @@ def show_user_management():
             with cols[col_idx]:
                 st.image(str(center_img), caption=user_name, width="stretch")
                 
-                # Tambahkan konfirmasi hapus
+                # Add delete confirmation
                 if st.button("🗑️ Hapus User", key=f"del_btn_{user_name}", type="secondary"):
                     st.warning(f"⚠️ Yakin ingin menghapus user '{user_name}'?")
                     confirm_col1, confirm_col2 = st.columns(2)
                     with confirm_col1:
                         if st.button("✅ Ya, Hapus", key=f"confirm_{user_name}", type="primary"):
                             try:
+                                # Delete user folder
                                 shutil.rmtree(folder)
+                                
+                                # Also delete from user_data.json if exists
+                                user_data_file = attendance_dir.parent / "user_data.json"
+                                if user_data_file.exists():
+                                    import json
+                                    try:
+                                        with open(user_data_file, 'r') as f:
+                                            data = json.load(f)
+                                        if user_name in data:
+                                            del data[user_name]
+                                            with open(user_data_file, 'w') as f:
+                                                json.dump(data, f, indent=4)
+                                    except:
+                                        pass  # Ignore user_data.json errors
+                                
                                 st.success(f"✅ User {user_name} berhasil dihapus")
-                                time.sleep(1)  # Beri waktu untuk membaca pesan
+                                time.sleep(1)  # Give time to read message
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ Gagal menghapus user: {str(e)}")
