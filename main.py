@@ -68,58 +68,20 @@ def identifyEncodings(images, classNames):
             continue
     return encodeList
 
+from attendance_tracker import AttendanceTracker
+
+# Initialize the attendance tracker
+attendance_tracker = AttendanceTracker()
+
 def markAttendance(name):
     '''
-    This function handles attendance marking in CSV file and notifies the API
+    This function handles attendance marking using the AttendanceTracker
     
     args:
     name: str
+    returns: bool - True if attendance was marked, False if within cooldown period
     '''
-    try:
-        # Ensure the directory exists
-        os.makedirs("Attendance_Entry", exist_ok=True)
-        
-        # Use a fixed filename for today's date
-        now = datetime.now()
-        current_date = now.strftime("%y_%m_%d")
-        attendance_file = f'Attendance_Entry/Attendance_{current_date}.csv'
-        
-        # Create file with headers if it doesn't exist
-        if not os.path.exists(attendance_file):
-            with open(attendance_file, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(["Name", "Time", "Date"])
-        
-        # Record the attendance
-        time_str = now.strftime('%H:%M:%S')
-        date_str = now.strftime('%Y-%m-%d')
-        
-        with open(attendance_file, 'a', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow([name, time_str, date_str])
-        print(f"Logged attendance for {name} at {time_str}")
-        
-        # Attempt to notify the API
-        try:
-            import requests
-            requests.post("http://localhost:8000/attendance", 
-                        json={"name": name, "time": time_str, "date": date_str})
-        except:
-            print("Failed to notify API, but attendance was logged locally")
-    
-    except Exception as e:
-        print(f"Error marking attendance: {e}")
-        # If there's an error, try using a backup file
-        try:
-            backup_file = "Attendance_Entry/Attendance_Backup.csv"
-            with open(backup_file, 'a', newline='') as f:
-                writer = csv.writer(f)
-                if f.tell() == 0:  # If file is empty, write header
-                    writer.writerow(["Name", "Time", "Date"])
-                writer.writerow([name, now.strftime('%H:%M:%S'), now.strftime('%Y-%m-%d')])
-            print("Logged to backup file instead")
-        except Exception as backup_error:
-            print(f"Failed to write to backup file: {backup_error}")
+    return attendance_tracker.mark_attendance(name)
 
 # Ensure Attendance_Entry directory exists
 os.makedirs("Attendance_Entry", exist_ok=True)
@@ -292,14 +254,36 @@ while running:
                 matchIndex = np.argmin(faceDis)
                 if faceDis[matchIndex] < 0.4:  # strict threshold for better accuracy
                     name = classNames[matchIndex]
-                    markAttendance(name)
                     
-                    # Draw green frame for recognized face
+                    # Draw boxes and base name
                     top, right, bottom, left = [coord * 4 for coord in faceLoc]
                     cv2.rectangle(img, (left, top), (right, bottom), (0, 255, 0), 2)
                     cv2.rectangle(img, (left, bottom - 35), (right, bottom), (0, 255, 0), cv2.FILLED)
-                    cv2.putText(img, name, (left + 6, bottom - 6),
+                    
+                    # Try to mark attendance and get status
+                    current_shift = attendance_tracker._get_current_shift()
+                    if current_shift:
+                        if attendance_tracker.can_mark_attendance(name):
+                            marked = markAttendance(name)
+                            if marked:
+                                status = f"✓ {current_shift.upper()} Shift"
+                            else:
+                                status = f"{current_shift.upper()} Shift - Already Marked"
+                        else:
+                            if name in attendance_tracker.marked_shifts and \
+                               current_shift in attendance_tracker.marked_shifts[name]:
+                                status = f"{current_shift.upper()} Shift - Already Marked"
+                            else:
+                                status = f"{current_shift.upper()} Shift"
+                    else:
+                        status = "Outside shift hours"
+                    
+                    # Display name on top line
+                    cv2.putText(img, name, (left + 6, bottom - 25),
                             cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
+                    # Display shift status on bottom line
+                    cv2.putText(img, status, (left + 6, bottom - 6),
+                            cv2.FONT_HERSHEY_COMPLEX, 0.6, (255, 255, 255), 1)
 
     # Display the result
     cv2.imshow('Attendance System', img)

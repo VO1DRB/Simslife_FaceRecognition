@@ -142,6 +142,11 @@ def Intial_data_capture(name=None, camera_id=None):
     print("4. Look at CENTER and blink 3 times")
     print("Press ESC to cancel\n")
     
+    # Variables to store the locked face position
+    locked_face = None
+    face_lock_threshold = 50  # pixels
+    face_landmarks = []
+    
     while True:
         ret, image = camera.read()
         if not ret:
@@ -151,9 +156,61 @@ def Intial_data_capture(name=None, camera_id=None):
         small_frame = cv2.resize(image, (0,0), fx=0.25, fy=0.25)
         rgb_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
         face_locations = face_recognition.face_locations(rgb_small, model="hog")
-        face_landmarks = face_recognition.face_landmarks(rgb_small)
-
+        
         display_image = image.copy()
+        
+        # Initial face detection and locking
+        if len(face_locations) > 0:
+            if locked_face is None:
+                # First time face detection - lock it
+                face_location = face_locations[0]
+                face_center = ((face_location[1] + face_location[3]) // 2, 
+                             (face_location[0] + face_location[2]) // 2)
+                locked_face = face_center
+                face_landmarks = face_recognition.face_landmarks(rgb_small)
+                print("Face locked! Starting registration process...")
+                cv2.putText(display_image, "Face locked! Starting registration...", 
+                           (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            else:
+                # Track the locked face
+                closest_face_idx = 0
+                min_distance = float('inf')
+                
+                for idx, face_location in enumerate(face_locations):
+                    face_center = ((face_location[1] + face_location[3]) // 2, 
+                                 (face_location[0] + face_location[2]) // 2)
+                    distance = np.sqrt((face_center[0] - locked_face[0])**2 + 
+                                    (face_center[1] - locked_face[1])**2)
+                    
+                    if distance < min_distance:
+                        min_distance = distance
+                        closest_face_idx = idx
+                
+                # Only use the closest face if it's within the threshold
+                if min_distance < face_lock_threshold:
+                    # Get landmarks only for the locked face
+                    face_locations = [face_locations[closest_face_idx]]
+                    face_landmarks = face_recognition.face_landmarks(rgb_small, [face_locations[0]])
+                    
+                    # Update locked face position to track movement
+                    face_center = ((face_locations[0][1] + face_locations[0][3]) // 2, 
+                                 (face_locations[0][0] + face_locations[0][2]) // 2)
+                    locked_face = face_center
+                else:
+                    # If locked face is not found, clear all detections
+                    face_locations = []
+                    face_landmarks = []
+                    # Don't update locked_face position - keep waiting for the original face to return
+            
+            # Draw rectangle around other faces in red to show they're ignored
+            if locked_face is not None:
+                for face_loc in face_locations[1:] if len(face_locations) > 1 else []:
+                    top, right, bottom, left = [coord * 4 for coord in face_loc]
+                    cv2.rectangle(display_image, (left, top), (right, bottom), (0, 0, 255), 2)
+                    cv2.putText(display_image, "Ignored", (left, top - 10),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+        else:
+            face_landmarks = []
         
         if len(face_locations) > 0 and len(face_landmarks) > 0:
             landmarks = face_landmarks[0]
@@ -167,13 +224,23 @@ def Intial_data_capture(name=None, camera_id=None):
                     scaled_points.append([point[0] * 4, point[1] * 4])
                 scaled_landmarks[feature] = scaled_points
             
-            # Draw landmarks
-            for feature, points in scaled_landmarks.items():
-                points = np.array(points)
-                cv2.polylines(display_image, [points], True, (0, 255, 0), 2)
-                if feature in ['left_eye', 'right_eye', 'nose_tip', 'top_lip', 'bottom_lip']:
-                    for point in points:
-                        cv2.circle(display_image, (int(point[0]), int(point[1])), 2, (0, 255, 0), -1)
+            # Draw landmarks and face box for the locked face
+            if len(face_locations) > 0:
+                face_loc = face_locations[0]
+                top, right, bottom, left = [coord * 4 for coord in face_loc]
+                
+                # Draw green box for the locked face
+                cv2.rectangle(display_image, (left, top), (right, bottom), (0, 255, 0), 2)
+                cv2.putText(display_image, "Locked", (left, top - 10),
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                
+                # Draw landmarks
+                for feature, points in scaled_landmarks.items():
+                    points = np.array(points)
+                    cv2.polylines(display_image, [points], True, (0, 255, 0), 2)
+                    if feature in ['left_eye', 'right_eye', 'nose_tip', 'top_lip', 'bottom_lip']:
+                        for point in points:
+                            cv2.circle(display_image, (int(point[0]), int(point[1])), 2, (0, 255, 0), -1)
             
             # 🔹 Ganti: pakai Head Pose Estimation
             orientation = detect_face_orientation(scaled_landmarks, image.shape)
@@ -333,6 +400,10 @@ def Intial_data_capture(name=None, camera_id=None):
             print("Capture cancelled")
             break
     
+    import shutil
+    import subprocess
+    import sys
+    
     # Check if all required images were captured
     required_images = ['center.png', 'left.png', 'right.png']
     all_images_captured = all(os.path.exists(os.path.join(person_path, img)) for img in required_images)
@@ -344,32 +415,46 @@ def Intial_data_capture(name=None, camera_id=None):
     # If capture was not complete, delete the folder
     if not all_images_captured:
         try:
-            import shutil
-            shutil.rmtree(person_path)
-            print(f"\nCapture incomplete. Removed temporary data for {name}")
+            if os.path.exists(person_path):
+                shutil.rmtree(person_path)
+                print(f"\nCapture incomplete. Removed temporary data for {name}")
             return False
         except Exception as e:
             print(f"Warning: Could not remove incomplete data: {e}")
+            return False
     else:
-        # Automatically run main.py after successful capture
-        print("\nStarting attendance system...")
-        import subprocess
-        import sys
-        import os
-        
-        # Get the directory where initial_data_capture.py is located
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        main_py_path = os.path.join(current_dir, "main.py")
-        
-        if os.path.exists(main_py_path):
-            subprocess.Popen([sys.executable, main_py_path])
-        else:
-            print(f"Warning: Could not find main.py in {current_dir}")
-            print("Please run main.py manually")
-        return True
+        try:
+            # Automatically run main.py after successful capture
+            print("\nStarting attendance system...")
+            
+            # Get the directory where initial_data_capture.py is located
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            main_py_path = os.path.join(script_dir, "main.py")
+            
+            if os.path.exists(main_py_path):
+                # Use a different method to start main.py
+                try:
+                    # Try using subprocess.Popen
+                    subprocess.Popen([sys.executable, main_py_path])
+                except Exception as e:
+                    print(f"Failed to start main.py with Popen: {e}")
+                    try:
+                        # Fallback to subprocess.run
+                        subprocess.run([sys.executable, main_py_path], check=False)
+                    except Exception as e:
+                        print(f"Failed to start main.py with run: {e}")
+                        print("Please run main.py manually")
+            else:
+                print(f"Warning: Could not find main.py in {script_dir}")
+                print("Please run main.py manually")
+            return True
+        except Exception as e:
+            print(f"Error starting main.py: {e}")
+            return True  # Still return True as images were captured successfully
 
 if __name__ == "__main__":
     import sys
+    import os
     import shutil
     
     if len(sys.argv) > 1:
@@ -382,11 +467,13 @@ if __name__ == "__main__":
                 break
             print("Name cannot be empty. Please try again.")
     
+    base_path = "Attendance_data"
+    person_path = os.path.join(base_path, name)
+    
     try:
         success = Intial_data_capture(name)
         if not success:
             # If registration was not successful, ensure cleanup
-            person_path = os.path.join("Attendance_data", name)
             if os.path.exists(person_path):
                 shutil.rmtree(person_path)
                 print(f"Cleaned up incomplete registration data for {name}")
@@ -394,7 +481,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nRegistration cancelled by user")
         # Clean up the folder if it was created
-        person_path = os.path.join("Attendance_data", name)
         if os.path.exists(person_path):
             shutil.rmtree(person_path)
             print(f"Cleaned up registration data for {name}")
@@ -402,7 +488,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nError during registration: {e}")
         # Clean up the folder if it was created
-        person_path = os.path.join("Attendance_data", name)
         if os.path.exists(person_path):
             shutil.rmtree(person_path)
             print(f"Cleaned up registration data for {name}")

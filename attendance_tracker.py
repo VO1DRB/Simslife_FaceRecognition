@@ -1,0 +1,135 @@
+import time
+from datetime import datetime
+import requests
+import csv
+import os
+from pathlib import Path
+
+class AttendanceTracker:
+    def __init__(self):
+        self.last_attendance = {}  # Store last attendance time for each person
+        self.marked_shifts = {}  # Track which shifts have been marked for each person today
+        self.cooldown = 300  # 5 minutes in seconds
+        
+        # Define shift times (24-hour format)
+        self.morning_shift = {
+            'start': '08:00',
+            'end': '17:00'
+        }
+        self.night_shift = {
+            'start': '16:00',
+            'end': '22:00'
+        }
+    
+    def _get_current_shift(self):
+        """Determine which shift the current time falls into"""
+        current_time = datetime.now().strftime('%H:%M')
+        
+        if self._is_time_between(current_time, self.morning_shift['start'], self.morning_shift['end']):
+            return 'morning'
+        elif self._is_time_between(current_time, self.night_shift['start'], self.night_shift['end']):
+            return 'night'
+        return None
+    
+    def _is_time_between(self, current, start, end):
+        """Check if current time is between start and end times"""
+        current = datetime.strptime(current, '%H:%M').time()
+        start = datetime.strptime(start, '%H:%M').time()
+        end = datetime.strptime(end, '%H:%M').time()
+        
+        return start <= current <= end
+    
+    def _reset_daily_records(self, name):
+        """Reset daily records if it's a new day"""
+        current_date = datetime.now().date()
+        if name in self.marked_shifts:
+            last_date = datetime.fromtimestamp(self.last_attendance.get(name, 0)).date()
+            if current_date != last_date:
+                self.marked_shifts[name] = set()
+    
+    def can_mark_attendance(self, name):
+        """Check if attendance can be marked based on shift times"""
+        current_shift = self._get_current_shift()
+        
+        # If not within any shift time window
+        if not current_shift:
+            return False
+        
+        # Reset records if it's a new day
+        self._reset_daily_records(name)
+        
+        # Initialize marked shifts for new names
+        if name not in self.marked_shifts:
+            self.marked_shifts[name] = set()
+        
+        # Check if this shift has already been marked today
+        if current_shift in self.marked_shifts[name]:
+            return False
+        
+        # Check cooldown period
+        current_time = time.time()
+        if name in self.last_attendance:
+            time_diff = current_time - self.last_attendance[name]
+            if time_diff < self.cooldown:
+                return False
+        
+        return True
+        
+    def mark_attendance(self, name):
+        """Mark attendance and notify API if within shift hours and not already marked"""
+        if not self.can_mark_attendance(name):
+            return False
+            
+        current_time = time.time()
+        self.last_attendance[name] = current_time
+        
+        # Get current shift and mark it as recorded
+        current_shift = self._get_current_shift()
+        if current_shift:
+            self.marked_shifts.setdefault(name, set()).add(current_shift)
+        
+        # Get current date and time
+        now = datetime.now()
+        time_str = now.strftime('%H:%M:%S')
+        date_str = now.strftime('%Y-%m-%d')
+        
+        # Ensure the directory exists
+        os.makedirs("Attendance_Entry", exist_ok=True)
+        
+        # Create the CSV file for today
+        current_date = now.strftime("%y_%m_%d")
+        attendance_file = f'Attendance_Entry/Attendance_{current_date}.csv'
+        
+        try:
+            # Create file with headers if it doesn't exist
+            if not os.path.exists(attendance_file):
+                with open(attendance_file, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Name", "Time", "Date"])
+            
+            # Record the attendance
+            with open(attendance_file, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([name, time_str, date_str])
+            
+            # Notify the API
+            try:
+                response = requests.post(
+                    "http://localhost:8000/attendance",
+                    json={
+                        "name": name,
+                        "time": time_str,
+                        "date": date_str
+                    }
+                )
+                if response.status_code == 200:
+                    print(f"Attendance marked for {name} at {time_str}")
+            except requests.RequestException:
+                # Silently continue if API is not available
+                pass
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error marking attendance: {e}")
+            return False
