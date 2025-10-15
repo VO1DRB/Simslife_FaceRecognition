@@ -1,5 +1,0 @@
-cmake
-libboost-all-dev
-libopenblas-dev
-liblapack-dev
-libx11-dev
