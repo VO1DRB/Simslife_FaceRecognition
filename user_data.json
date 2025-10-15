@@ -26,5 +26,29 @@
     "sulis": {
         "shift": "night",
         "role": "employee"
+    },
+    "John Doe": {
+        "shift": "morning",
+        "role": "employee"
+    },
+    "kipek": {
+        "shift": "morning",
+        "role": "employee"
+    },
+    "kipik": {
+        "shift": "morning",
+        "role": "employee"
+    },
+    "lololo": {
+        "shift": "morning",
+        "role": "employee"
+    },
+    "on ol": {
+        "shift": "morning",
+        "role": "employee"
+    },
+    "GENGKIPIK": {
+        "shift": "night",
+        "role": "employee"
     }
 }

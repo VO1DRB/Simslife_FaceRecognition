@@ -11,6 +11,51 @@ import subprocess
 import shutil
 import json
 from utils import sound
+import cv2
+import numpy as np
+import face_recognition
+from attendance_tracker import AttendanceTracker
+
+# Initialize face recognition system
+def initialize_face_recognition():
+    if 'face_recognition_initialized' not in st.session_state:
+        path = Path(__file__).parent.parent / 'Attendance_data'
+        images = []
+        classNames = []
+        
+        # Get list of person folders
+        myList = [f for f in os.listdir(path) if os.path.isdir(os.path.join(path, f))]
+        
+        # Process each person's folder
+        for person_folder in myList:
+            person_path = os.path.join(path, person_folder)
+            # Look for all pose images (center, left, right)
+            for pose in ['center.png', 'left.png', 'right.png']:
+                pose_path = os.path.join(person_path, pose)
+                if os.path.exists(pose_path):
+                    curImg = cv2.imread(pose_path)
+                    if curImg is not None:
+                        images.append(curImg)
+                        classNames.append(person_folder)
+        
+        # Encode faces
+        encodeListKnown = []
+        for img, name in zip(images, classNames):
+            img = cv2.cvtColor(cv2.resize(img, (0,0), fx=0.25, fy=0.25), cv2.COLOR_BGR2RGB)
+            encodings = face_recognition.face_encodings(img)
+            if len(encodings) > 0:
+                encodeListKnown.append(encodings[0])
+            else:
+                classNames.remove(name)
+                continue
+        
+        st.session_state.classNames = classNames
+        st.session_state.encodeListKnown = encodeListKnown
+        st.session_state.face_recognition_initialized = True
+        st.session_state.attendance_tracker = AttendanceTracker()
+
+# Initialize face recognition on app start
+initialize_face_recognition()
 
 def delete_user_completely(username: str):
     """
@@ -82,7 +127,7 @@ def delete_user_completely(username: str):
         print(f"Error deleting user {username}: {e}")
         return False
 
-# Configure page
+# Configure page and initial session state
 st.set_page_config(
     page_title="Face Recognition Attendance Dashboard",
     page_icon="📊",
@@ -292,8 +337,8 @@ def get_registered_users():
 
 # Import modules
 from registration import show_user_registration, navigate_to
-from user_management import show_user_management
 from pages.attendance import show_attendance
+from user_management import show_user_management
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -311,7 +356,7 @@ if 'registration_state' not in st.session_state:
 def main():
     st.title("Face Recognition Attendance Dashboard")
     
-    # Sidebar
+    # Navigation sidebar
     st.sidebar.title("Navigation")
     
     # Navigation options

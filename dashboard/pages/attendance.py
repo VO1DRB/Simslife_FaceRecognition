@@ -55,18 +55,21 @@ def start_attendance(mode="checkin"):
             st.error("❌ Tidak ada user terdaftar di sistem")
             return False
             
+        # Kill any existing python processes running main.py
+        import psutil
+        PROCNAME = "python.exe"
+        for proc in psutil.process_iter():
+            try:
+                if proc.name() == PROCNAME:
+                    cmdline = proc.cmdline()
+                    if len(cmdline) > 1 and "main.py" in cmdline[1]:
+                        proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+                
         # Set up environment
         env = os.environ.copy()
         env['PYTHONPATH'] = str(root_dir)
-        
-        # Start attendance process with mode
-        process = subprocess.Popen(
-            [sys.executable, str(script_path), mode],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            env=env
-        )
         
         # Start attendance process with mode
         process = subprocess.Popen(
@@ -183,15 +186,17 @@ def check_attendance_status(process):
         return False, "Process not found"
         
     try:
+        # Check if process has already terminated
+        if hasattr(process, '_terminated') and process._terminated:
+            return False, "✅ Absensi selesai"
+            
         poll_result = process.poll()
         
         if poll_result is None:  # Still running
             stdout_lines = []
             if process.stdout:
-                while True:
-                    line = process.stdout.readline()
-                    if not line:
-                        break
+                line = process.stdout.readline()
+                if line:
                     stdout_lines.append(line.strip())
                     
             # Get latest output
@@ -202,6 +207,27 @@ def check_attendance_status(process):
                 # Extract name and get shift info
                 recognized_name = latest_output.split("Recognized:")[1].strip()
                 assigned_shift, current_shift, status, is_checkout = get_shift_status(recognized_name)
+                
+                # Record attendance first
+                now = datetime.now()
+                attendance_file = get_current_root_dir() / "Attendance_Entry" / f"Attendance_{now.strftime('%y_%m_%d')}.csv"
+                
+                # Ensure directory exists
+                attendance_file.parent.mkdir(exist_ok=True)
+                
+                # Create or append to CSV
+                file_exists = attendance_file.exists()
+                with open(attendance_file, 'a', newline='') as f:
+                    writer = csv.writer(f)
+                    if not file_exists:
+                        writer.writerow(["Name", "Time", "Date", "Shift", "Status"])
+                    writer.writerow([
+                        recognized_name,
+                        now.strftime('%H:%M:%S'),
+                        now.strftime('%Y-%m-%d'),
+                        current_shift,
+                        status
+                    ])
                 
                 # Close camera after recognition
                 process.terminate()
@@ -272,31 +298,88 @@ def show_attendance():
             st.rerun()
         return
     
-    st.write("Gunakan halaman ini untuk melakukan absensi menggunakan face recognition.")
+    # Create tabs for attendance actions and history
+    tab1, tab2 = st.tabs(["Absensi", "Riwayat Absensi"])
     
-    # Initialize state if not exists
-    if 'attendance_state' not in st.session_state:
-        st.session_state['attendance_state'] = {
-            'is_running': False,
-            'process': None,
-            'last_captured': None
-        }
+    with tab1:
+        st.write("Gunakan halaman ini untuk melakukan absensi menggunakan face recognition.")
+        
+        # Initialize state if not exists
+        if 'attendance_state' not in st.session_state:
+            st.session_state['attendance_state'] = {
+                'is_running': False,
+                'process': None,
+                'last_captured': None
+            }
+        
+        state = st.session_state.attendance_state
+        
+        # Show attendance button if not running
+        if not state['is_running']:
+            if st.button("Mulai Absensi", type="primary", width="stretch"):
+                process = start_attendance()
+                if process:
+                    state['is_running'] = True
+                    state['process'] = process
+                    state['last_captured'] = None
+                    st.rerun()
+        
+        # Show status if running
+        else:
+            st.info("🎥 Proses absensi sedang berjalan...")
     
-    state = st.session_state.attendance_state
-    
-    # Show attendance button if not running
-    if not state['is_running']:
-        if st.button("Mulai Absensi", type="primary", width="stretch"):
-            process = start_attendance()
-            if process:
-                state['is_running'] = True
-                state['process'] = process
-                state['last_captured'] = None
-                st.rerun()
-    
-    # Show status if running
-    else:
-        st.info("🎥 Proses absensi sedang berjalan...")
+    with tab2:
+        st.subheader("Riwayat Absensi")
+        
+        # Date selector for attendance history
+        col1, col2 = st.columns([2,2])
+        with col1:
+            selected_date = st.date_input(
+                "Pilih Tanggal",
+                datetime.now()
+            )
+        
+        # Format date for filename
+        date_str = selected_date.strftime("%y_%m_%d")
+        attendance_file = get_current_root_dir() / "Attendance_Entry" / f"Attendance_{date_str}.csv"
+        
+        if attendance_file.exists():
+            # Read and display attendance data
+            try:
+                import pandas as pd
+                df = pd.read_csv(attendance_file)
+                
+                # Convert time to datetime if needed
+                if 'Time' in df.columns:
+                    df['Time'] = pd.to_datetime(df['Time']).dt.strftime('%H:%M:%S')
+                
+                # Display the attendance records in a table
+                st.dataframe(
+                    df,
+                    column_config={
+                        "Name": "Nama",
+                        "Time": "Waktu",
+                        "Date": "Tanggal"
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+                
+                # Show summary metrics
+                total_records = len(df)
+                if total_records > 0:
+                    st.write(f"Total absensi hari ini: {total_records}")
+                    
+                    # If we have shift information
+                    if 'Shift' in df.columns:
+                        shifts = df['Shift'].value_counts()
+                        st.write("Breakdown per shift:")
+                        for shift, count in shifts.items():
+                            st.write(f"- {shift.title()}: {count}")
+            except Exception as e:
+                st.error(f"Error membaca data absensi: {str(e)}")
+        else:
+            st.info(f"Tidak ada data absensi untuk tanggal {selected_date.strftime('%d-%m-%Y')}")
         
         # Add cancel button
         col1, col2 = st.columns([4, 1])

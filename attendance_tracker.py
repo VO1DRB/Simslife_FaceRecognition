@@ -9,7 +9,7 @@ class AttendanceTracker:
     def __init__(self):
         self.last_attendance = {}  # Store last attendance time for each person
         self.marked_shifts = {}  # Track which shifts have been marked for each person today
-        self.cooldown = 300  # 5 minutes in seconds
+        self.cooldown = 3600  # 1 hour in seconds
         
         # Define shift times (24-hour format)
         self.morning_shift = {
@@ -48,7 +48,7 @@ class AttendanceTracker:
                 self.marked_shifts[name] = set()
     
     def can_mark_attendance(self, name):
-        """Check if attendance can be marked based on shift times"""
+        """Check if attendance can be marked based on shift times and hourly cooldown"""
         current_shift = self._get_current_shift()
         
         # If not within any shift time window
@@ -61,16 +61,15 @@ class AttendanceTracker:
         # Initialize marked shifts for new names
         if name not in self.marked_shifts:
             self.marked_shifts[name] = set()
-        
-        # Check if this shift has already been marked today
-        if current_shift in self.marked_shifts[name]:
-            return False
-        
-        # Check cooldown period
+            
+        # Check cooldown period (one detection per hour)
         current_time = time.time()
         if name in self.last_attendance:
             time_diff = current_time - self.last_attendance[name]
             if time_diff < self.cooldown:
+                # Calculate remaining cooldown time in minutes
+                remaining_minutes = int((self.cooldown - time_diff) / 60)
+                print(f"Cooldown active for {name}. Please wait {remaining_minutes} minutes before next detection.")
                 return False
         
         return True
