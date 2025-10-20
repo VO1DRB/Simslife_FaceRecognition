@@ -80,23 +80,18 @@ def _delete_user(user_name: str, base_dir: Path):
     st.warning(f"⚠️ Konfirmasi hapus data user: **{user_name}**")
     if st.button(f"✅ Ya, hapus {user_name}", key=f"confirm_delete_{user_name}"):
         try:
-            # Panggil API hapus dulu
-            api_call(f"/users/{user_name}", method="delete")
-
-            # Hapus file .png (jika ada)
-            file_path = base_dir / f"{user_name}.png"
-            if file_path.exists():
-                os.remove(file_path)
-
-            # Hapus folder (jika ada)
-            folder_path = base_dir / user_name
-            if folder_path.exists() and folder_path.is_dir():
-                shutil.rmtree(folder_path)
-
-            # Hapus dari user_data.json
-            _remove_from_json(base_dir, user_name)
-
-            st.success(f"✅ User '{user_name}' berhasil dihapus.")
+            # Import fungsi delete_user_completely dari utils.user_data
+            from utils.user_data import delete_user_completely
+            
+            # Gunakan fungsi yang lebih lengkap untuk menghapus user sepenuhnya
+            success, message = delete_user_completely(user_name)
+            
+            if success:
+                st.success(f"✅ User '{user_name}' berhasil dihapus.")
+            else:
+                st.error(f"⚠️ Terjadi masalah saat menghapus: {message}")
+                
+            # Tetap rerun untuk menyegarkan UI
             st.rerun()
         except Exception as e:
             st.error(f"Gagal menghapus {user_name}: {e}")

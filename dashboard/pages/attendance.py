@@ -5,8 +5,19 @@ import time
 import sys
 import os
 import csv
+import pandas as pd
+import cv2
+import numpy as np
 from datetime import datetime
 from utils import sound
+from utils.face_recognition_utils import (
+    get_camera_feed,
+    analyze_face_image, 
+    load_face_encodings,
+    initialize_attendance_state,
+    reset_attendance_state,
+    record_attendance
+)
 
 def get_current_root_dir():
     """Get the root directory where main.py is located"""
@@ -39,54 +50,11 @@ def check_registration():
     return len(user_folders) > 0
 
 def start_attendance(mode="checkin"):
-    """Start the attendance process"""
-    try:
-        # Get root directory
-        root_dir = get_current_root_dir()
-        script_path = root_dir / "main.py"
-        
-        if not script_path.exists():
-            st.error(f"❌ Script absensi tidak ditemukan di: {script_path}")
-            return False
-            
-        # Make sure we're using the root Attendance_data folder
-        attendance_dir = root_dir / "Attendance_data"
-        if not attendance_dir.exists() or not any(attendance_dir.iterdir()):
-            st.error("❌ Tidak ada user terdaftar di sistem")
-            return False
-            
-        # Kill any existing python processes running main.py
-        import psutil
-        PROCNAME = "python.exe"
-        for proc in psutil.process_iter():
-            try:
-                if proc.name() == PROCNAME:
-                    cmdline = proc.cmdline()
-                    if len(cmdline) > 1 and "main.py" in cmdline[1]:
-                        proc.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                pass
-                
-        # Set up environment
-        env = os.environ.copy()
-        env['PYTHONPATH'] = str(root_dir)
-        
-        # Start attendance process with mode
-        process = subprocess.Popen(
-            [sys.executable, str(script_path), mode],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            cwd=str(root_dir),
-            env=env,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        
-        return process
-        
-    except Exception as e:
-        st.error(f"❌ Error: {str(e)}")
-        return None
+    """
+    This is a placeholder function to maintain compatibility with existing code.
+    The actual attendance is now handled directly within the Streamlit interface.
+    """
+    return True
 
 def get_shift_status(recognized_name):
     """
@@ -178,117 +146,87 @@ def get_shift_status(recognized_name):
         
     return assigned_shift, current_shift, status, is_checkout
 
-def check_attendance_status(process):
+def process_recognized_face(recognized_name):
     """
-    Check attendance process status
-    """
-    if not process:
-        return False, "Process not found"
+    Process a recognized face and record attendance
+    
+    Args:
+        recognized_name: Name of the recognized person
         
+    Returns:
+        str: Status message to display
+    """
     try:
-        # Check if process has already terminated
-        if hasattr(process, '_terminated') and process._terminated:
-            return False, "✅ Absensi selesai"
-            
-        poll_result = process.poll()
+        # Get shift status
+        assigned_shift, current_shift, status, is_checkout = get_shift_status(recognized_name)
         
-        if poll_result is None:  # Still running
-            stdout_lines = []
-            if process.stdout:
-                line = process.stdout.readline()
-                if line:
-                    stdout_lines.append(line.strip())
-                    
-            # Get latest output
-            latest_output = stdout_lines[-1] if stdout_lines else ""
+        # Record attendance
+        now = datetime.now()
+        attendance_file = get_current_root_dir() / "Attendance_Entry" / f"Attendance_{now.strftime('%y_%m_%d')}.csv"
+        
+        # Ensure directory exists
+        attendance_file.parent.mkdir(exist_ok=True)
+        
+        # Create or append to CSV
+        file_exists = attendance_file.exists()
+        with open(attendance_file, 'a', newline='') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["Name", "Time", "Date", "Shift", "Status"])
+            writer.writerow([
+                recognized_name,
+                now.strftime('%H:%M:%S'),
+                now.strftime('%Y-%m-%d'),
+                current_shift,
+                status
+            ])
+        
+        # Prepare status message based on attendance type and status
+        message = ""
+        if status == "outside_hours":
+            message = f"❌ Di luar jam kerja!\nNama: {recognized_name}\n\nJam kerja:\nShift Pagi: 08:00 - 17:00\nShift Malam: 17:00 - 22:00"
+        elif status == "wrong_shift":
+            message = (f"⚠️ Ketidaksesuaian Shift!\n"
+                     f"Nama: {recognized_name}\n"
+                     f"Anda terdaftar di shift {assigned_shift.upper()}\n"
+                     f"Jam kerja Anda:\n"
+                     f"{'08:00 - 17:00' if assigned_shift == 'morning' else '17:00 - 22:00'}")
+        elif status == "overtime_checkin":
+            message = (f"⚠️ Perhatian - Overtime Check-in\n"
+                     f"Nama: {recognized_name}\n"
+                     f"Anda melakukan check-in di luar shift normal Anda (Shift {assigned_shift.upper()})\n"
+                     f"Absensi akan dicatat sebagai overtime/lembur.")
+            sound.play_sound('notification')
+        elif status == "no_checkin":
+            message = f"❌ Tidak dapat melakukan checkout!\nNama: {recognized_name}\nAnda belum melakukan check-in hari ini."
+        elif status == "already_checkedin":
+            message = f"⚠️ Sudah absen masuk!\nNama: {recognized_name}\nSilakan lakukan checkout di jam pulang."
+        elif status == "checkout":
+            message = f"✅ Checkout berhasil!\nNama: {recognized_name}\nTerima kasih atas kerja kerasnya hari ini!"
+            sound.play_sound('success')
+        else:
+            time_status = "tepat waktu" if status == "on_time" else "terlambat"
+            shift_info = ""
+            if assigned_shift != current_shift and status != "overtime_checkin":
+                shift_info = f"\n⚠️ Anda terdaftar di shift {assigned_shift} tapi melakukan absensi di shift {current_shift}"
             
-            # Check for recognized face
-            if "Recognized:" in latest_output:
-                # Extract name and get shift info
-                recognized_name = latest_output.split("Recognized:")[1].strip()
-                assigned_shift, current_shift, status, is_checkout = get_shift_status(recognized_name)
-                
-                # Record attendance first
-                now = datetime.now()
-                attendance_file = get_current_root_dir() / "Attendance_Entry" / f"Attendance_{now.strftime('%y_%m_%d')}.csv"
-                
-                # Ensure directory exists
-                attendance_file.parent.mkdir(exist_ok=True)
-                
-                # Create or append to CSV
-                file_exists = attendance_file.exists()
-                with open(attendance_file, 'a', newline='') as f:
-                    writer = csv.writer(f)
-                    if not file_exists:
-                        writer.writerow(["Name", "Time", "Date", "Shift", "Status"])
-                    writer.writerow([
-                        recognized_name,
-                        now.strftime('%H:%M:%S'),
-                        now.strftime('%Y-%m-%d'),
-                        current_shift,
-                        status
-                    ])
-                
-                # Close camera after recognition
-                process.terminate()
-                
-                # Prepare status message based on attendance type and status
-                message = ""
-                if status == "outside_hours":
-                    message = f"❌ Di luar jam kerja!\nNama: {recognized_name}\n\nJam kerja:\nShift Pagi: 08:00 - 17:00\nShift Malam: 17:00 - 22:00"
-                elif status == "wrong_shift":
-                    message = (f"⚠️ Ketidaksesuaian Shift!\n"
-                             f"Nama: {recognized_name}\n"
-                             f"Anda terdaftar di shift {assigned_shift.upper()}\n"
-                             f"Jam kerja Anda:\n"
-                             f"{'08:00 - 17:00' if assigned_shift == 'morning' else '17:00 - 22:00'}")
-                elif status == "overtime_checkin":
-                    message = (f"⚠️ Perhatian - Overtime Check-in\n"
-                             f"Nama: {recognized_name}\n"
-                             f"Anda melakukan check-in di luar shift normal Anda (Shift {assigned_shift.upper()})\n"
-                             f"Absensi akan dicatat sebagai overtime/lembur.")
-                    sound.play_sound('notification')
-                elif status == "no_checkin":
-                    message = f"❌ Tidak dapat melakukan checkout!\nNama: {recognized_name}\nAnda belum melakukan check-in hari ini."
-                elif status == "already_checkedin":
-                    message = f"⚠️ Sudah absen masuk!\nNama: {recognized_name}\nSilakan lakukan checkout di jam pulang."
-                elif status == "checkout":
-                    message = f"✅ Checkout berhasil!\nNama: {recognized_name}\nTerima kasih atas kerja kerasnya hari ini!"
-                    sound.play_sound('success')
-                else:
-                    time_status = "tepat waktu" if status == "on_time" else "terlambat"
-                    shift_info = ""
-                    if assigned_shift != current_shift and status != "overtime_checkin":
-                        shift_info = f"\n⚠️ Anda terdaftar di shift {assigned_shift} tapi melakukan absensi di shift {current_shift}"
-                    
-                    batas_telat = "08:00" if current_shift == "morning" else "17:00"
-                    message = f"✅ Check-in berhasil!\nNama: {recognized_name}\nStatus: {time_status} (Batas: {batas_telat}){shift_info}"
-                    if status == "on_time":
-                        sound.play_sound('success')
-                    else:
-                        sound.play_sound('notification')
-                
-                return False, message
-                
-            # Check for recognized face processing
-            if "Recognized" in latest_output:
-                return True, "✅ Wajah terdeteksi"
-                
-            return True, "🎥 Menunggu wajah terdeteksi..."
-            
-        else:  # Process finished
-            stdout, stderr = process.communicate()
-            if poll_result == 0:
-                return False, "✅ Absensi selesai"
+            batas_telat = "08:00" if current_shift == "morning" else "17:00"
+            message = f"✅ Check-in berhasil!\nNama: {recognized_name}\nStatus: {time_status} (Batas: {batas_telat}){shift_info}"
+            if status == "on_time":
+                sound.play_sound('success')
             else:
-                return False, f"❌ Error: {stderr if stderr else 'Unknown error'}"
+                sound.play_sound('notification')
                 
+        return message
     except Exception as e:
-        return False, f"❌ Error: {str(e)}"
+        return f"❌ Error: {str(e)}"
 
 def show_attendance():
     """Show attendance capture page"""
     st.header("Face Recognition Attendance")
+    
+    # Import camera utilities
+    from utils.camera import get_camera_feed, analyze_face_image, load_face_encodings
     
     # Check if users are registered
     if not check_registration():
@@ -304,29 +242,140 @@ def show_attendance():
     with tab1:
         st.write("Gunakan halaman ini untuk melakukan absensi menggunakan face recognition.")
         
-        # Initialize state if not exists
-        if 'attendance_state' not in st.session_state:
-            st.session_state['attendance_state'] = {
-                'is_running': False,
-                'process': None,
-                'last_captured': None
-            }
+        # Initialize attendance state
+        state = initialize_attendance_state()
         
-        state = st.session_state.attendance_state
+        # Get known face encodings
+        known_face_encodings, known_face_names = load_face_encodings()
         
-        # Show attendance button if not running
-        if not state['is_running']:
-            if st.button("Mulai Absensi", type="primary", width="stretch"):
-                process = start_attendance()
-                if process:
-                    state['is_running'] = True
-                    state['process'] = process
-                    state['last_captured'] = None
-                    st.rerun()
-        
-        # Show status if running
+        if len(known_face_encodings) == 0:
+            st.warning("⚠️ No face encodings found. Please register users first.")
         else:
-            st.info("🎥 Proses absensi sedang berjalan...")
+            # Layout with camera controls
+            control_col1, control_col2, control_col3 = st.columns(3)
+            
+            with control_col1:
+                if st.button("📸 Start Recognition", type="primary"):
+                    state['camera_active'] = True
+                    state['is_active'] = True
+            
+            with control_col2:
+                if st.button("⏹️ Stop Camera", type="secondary"):
+                    state['camera_active'] = False
+                    state['is_active'] = False
+                    
+            with control_col3:
+                if st.button("🔄 Reset", type="secondary"):
+                    reset_attendance_state()
+                    st.rerun()
+            
+            # Camera display and info in two columns
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                # Camera container
+                camera_container = st.empty()
+                status_container = st.empty()
+                
+                # Either show camera feed or camera component based on active state
+                if state['camera_active']:
+                    # Get camera feed via camera_input
+                    camera_image = get_camera_feed()
+                    
+                    # Process camera feed if image was captured
+                    if camera_image is not None:
+                        # Convert the image from bytes to an OpenCV image
+                        bytes_data = camera_image.getvalue()
+                        img_array = np.frombuffer(bytes_data, np.uint8)
+                        image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                        
+                        # Analyze face in the image
+                        results = analyze_face_image(image, known_face_encodings, known_face_names)
+                        
+                        # Show recognition status
+                        if results and results['face_detected']:
+                            if results['multiple_faces']:
+                                status_container.warning("⚠️ Multiple faces detected! Please ensure only one person is in frame.")
+                            elif results['recognized_name']:
+                                recognized_name = results['recognized_name']
+                                
+                                # Check if this is a new recognition (not in cooldown)
+                                current_time = time.time()
+                                cooldown_expired = (
+                                    state['recognition_time'] is None or
+                                    current_time - state['recognition_time'] > 5  # 5 seconds cooldown
+                                )
+                                
+                                if (state['last_recognized'] != recognized_name) or cooldown_expired:
+                                    # New person or cooldown expired
+                                    status_message = process_recognized_face(recognized_name)
+                                    
+                                    # Update state
+                                    state['last_recognized'] = recognized_name
+                                    state['recognition_time'] = current_time
+                                    state['status_message'] = status_message
+                                    
+                                    # Record the user as recognized
+                                    if 'recognized_users' not in state:
+                                        state['recognized_users'] = []
+                                    if recognized_name not in state['recognized_users']:
+                                        state['recognized_users'].append(recognized_name)
+                                    
+                                    # Show success message
+                                    status_container.success(f"✅ Recognized: {recognized_name}")
+                                    st.info(status_message)
+                                else:
+                                    # Still in cooldown, show previous message
+                                    if state['status_message']:
+                                        status_container.info(state['status_message'])
+                            else:
+                                status_container.warning("❓ Face detected but not recognized. Please register first.")
+                        else:
+                            status_container.info("🔍 No face detected. Please position your face in front of the camera.")
+                else:
+                    # Show placeholder when camera is inactive
+                    camera_container.info("📸 Click the 'Start Recognition' button to activate the camera.")
+            
+            with col2:
+                st.subheader("Recognized Users")
+                
+                # Show recognized users
+                if 'recognized_users' in state and state['recognized_users']:
+                    for user in state['recognized_users']:
+                        st.success(f"✅ {user}")
+                else:
+                    st.info("No users recognized yet.")
+                
+                st.markdown("---")
+                st.subheader("Instructions")
+                st.markdown("""
+                1. Click **Start Recognition** to activate camera
+                2. Position your face in frame
+                3. Wait for successful recognition
+                4. Attendance will be recorded automatically
+                """)
+                
+                # Today's stats
+                st.markdown("---")
+                st.subheader("Today's Status")
+                
+                # Read today's attendance for quick stats
+                try:
+                    attendance_file = get_current_root_dir() / "Attendance_Entry" / f"Attendance_{datetime.now().strftime('%y_%m_%d')}.csv"
+                    if attendance_file.exists():
+                        df = pd.read_csv(attendance_file)
+                        st.metric("Total Records", len(df))
+                        
+                        # Show check-ins vs check-outs if Status column exists
+                        if 'Status' in df.columns:
+                            checkins = len(df[df['Status'] == 'Check-In'])
+                            checkouts = len(df[df['Status'] == 'Check-Out'])
+                            st.metric("Check-ins", checkins)
+                            st.metric("Check-outs", checkouts)
+                    else:
+                        st.info("No attendance recorded today")
+                except Exception as e:
+                    st.error(f"Error loading stats: {str(e)}")
     
     with tab2:
         st.subheader("Riwayat Absensi")
@@ -346,84 +395,75 @@ def show_attendance():
         if attendance_file.exists():
             # Read and display attendance data
             try:
-                import pandas as pd
                 df = pd.read_csv(attendance_file)
                 
                 # Convert time to datetime if needed
                 if 'Time' in df.columns:
                     df['Time'] = pd.to_datetime(df['Time']).dt.strftime('%H:%M:%S')
                 
-                # Display the attendance records in a table
+                # Calculate metrics
+                total_records = len(df)
+                unique_users = df['Name'].nunique()
+                
+                # Display metrics in a visually appealing way
+                metrics_cols = st.columns(3)
+                with metrics_cols[0]:
+                    st.metric("Total Absensi", total_records)
+                with metrics_cols[1]:
+                    st.metric("Jumlah User", unique_users)
+                
+                if 'Status' in df.columns:
+                    status_counts = df['Status'].value_counts().to_dict()
+                    with metrics_cols[2]:
+                        checkins = status_counts.get('Check-In', 0)
+                        checkouts = status_counts.get('Check-Out', 0)
+                        st.metric("Check-In/Out", f"{checkins}/{checkouts}")
+                
+                # Display the attendance records in a table with enhanced column config
                 st.dataframe(
                     df,
                     column_config={
-                        "Name": "Nama",
-                        "Time": "Waktu",
-                        "Date": "Tanggal"
+                        "Name": st.column_config.TextColumn("Nama", help="Nama pengguna"),
+                        "Time": st.column_config.TextColumn("Waktu", help="Waktu absensi"),
+                        "Date": st.column_config.TextColumn("Tanggal", help="Tanggal absensi"),
+                        "Status": st.column_config.TextColumn("Status", help="Status absensi (Check-In/Check-Out)"),
+                        "Shift": st.column_config.TextColumn("Shift", help="Shift kerja (pagi/malam)") if 'Shift' in df.columns else None
                     },
                     hide_index=True,
                     use_container_width=True
                 )
                 
-                # Show summary metrics
-                total_records = len(df)
+                # Visualizations for better data analysis
                 if total_records > 0:
-                    st.write(f"Total absensi hari ini: {total_records}")
+                    st.subheader("Analisis Absensi")
+                    
+                    # User breakdown chart
+                    user_counts = df['Name'].value_counts().reset_index()
+                    user_counts.columns = ['User', 'Count']
+                    st.subheader("Breakdown per User")
+                    st.bar_chart(user_counts, x='User', y='Count')
                     
                     # If we have shift information
                     if 'Shift' in df.columns:
-                        shifts = df['Shift'].value_counts()
-                        st.write("Breakdown per shift:")
-                        for shift, count in shifts.items():
-                            st.write(f"- {shift.title()}: {count}")
+                        shift_counts = df['Shift'].value_counts().reset_index()
+                        shift_counts.columns = ['Shift', 'Count']
+                        
+                        cols = st.columns(2)
+                        with cols[0]:
+                            st.subheader("Breakdown per Shift")
+                            st.bar_chart(shift_counts, x='Shift', y='Count')
+                        
+                        # If we have status information as well
+                        if 'Status' in df.columns:
+                            status_counts = df['Status'].value_counts().reset_index()
+                            status_counts.columns = ['Status', 'Count']
+                            
+                            with cols[1]:
+                                st.subheader("Breakdown per Status")
+                                st.bar_chart(status_counts, x='Status', y='Count')
             except Exception as e:
                 st.error(f"Error membaca data absensi: {str(e)}")
         else:
             st.info(f"Tidak ada data absensi untuk tanggal {selected_date.strftime('%d-%m-%Y')}")
-        
-        # Add cancel button
-        col1, col2 = st.columns([4, 1])
-        with col2:
-            if st.button("❌ Batalkan", width="stretch"):
-                if state['process']:
-                    state['process'].terminate()
-                state['is_running'] = False
-                state['process'] = None
-                st.rerun()
-        
-        # Check process status
-        is_running, status = check_attendance_status(state['process'])
-        
-        if not is_running:
-            if "berhasil" in status.lower():
-                st.success(status)
-            elif "error" in status.lower():
-                st.error(status)
-            else:
-                st.info(status)
             
-            # Reset state after showing status
-            time.sleep(2)
-            state['is_running'] = False
-            state['process'] = None
-            st.rerun()
-        else:
-            st.info(status)
-            
-    # Show attendance history
-    st.divider()
-    st.subheader("Riwayat Absensi Hari Ini")
-    
-    try:
-        attendance_file = get_current_root_dir() / "Attendance_Entry" / f"Attendance_{datetime.now().strftime('%y_%m_%d')}.csv"
-        if attendance_file.exists():
-            import pandas as pd
-            df = pd.read_csv(attendance_file)
-            if not df.empty:
-                st.dataframe(df, width="stretch")
-            else:
-                st.info("Belum ada absensi hari ini")
-        else:
-            st.info("Belum ada absensi hari ini")
-    except Exception as e:
-        st.error(f"Error membaca riwayat absensi: {str(e)}")
+    # Redundant section removed

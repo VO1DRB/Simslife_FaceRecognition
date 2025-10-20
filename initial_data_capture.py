@@ -92,7 +92,7 @@ def Intial_data_capture(name=None, camera_id=None):
     """
     base_path = "Attendance_data/"
     if camera_id == None:
-        camera_id = 1  # Use default camera on Windows
+        camera_id = 0  # Use default camera on Windows
     
     # Create base directory if it doesn't exist
     if not os.path.exists(base_path):

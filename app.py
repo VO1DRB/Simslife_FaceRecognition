@@ -12,7 +12,7 @@ from typing import List
 from pydantic import BaseModel
 
 # Initialize FastAPI app
-app = FastAPI()
+app = FastAPI(title="SIMSLIFE Face Recognition API", version="1.0.0")
 
 # Enable CORS
 app.add_middleware(
@@ -30,53 +30,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-@app.post("/token")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    if form_data.username == "admin" and form_data.password == "password":
-        access_token = create_access_token(
-            data={"sub": form_data.username}
-        )
-        return {"access_token": access_token, "token_type": "bearer"}
-    raise HTTPException(
-        status_code=400,
-        detail="Incorrect username or password"
-    )
-
-@app.post("/capture/{name}")
-async def capture_face(name: str, current_user: str = Depends(get_current_user)):
-    try:
-        # Get the root directory path and construct initial_data_capture.py path
-        root_dir = Path(__file__).parent
-        script_path = root_dir / "initial_data_capture.py"
-
-        # Validate script exists
-        if not script_path.exists():
-            raise HTTPException(
-                status_code=500,
-                detail=f"Script tidak ditemukan: {script_path}"
-            )
-
-        # Set up environment variables
-        env = os.environ.copy()
-        env['PYTHONPATH'] = str(root_dir)  # Add root dir to Python path
-
-        # Run the face capture script with proper environment
-        result = subprocess.run(
-            [sys.executable, str(script_path), name],
-            capture_output=True,
-            text=True,
-            cwd=str(root_dir),  # Set working directory
-            env=env)  # Set environment variables
-
-        # Check result
-        if result.returncode == 0:
-            return {"message": f"Face captured successfully for {name}"}
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Face capture failed: {result.stderr}"
-            )
-# Authentication and Database Models
+# Database Models (DEFINISI HANYA SEKALI)
 class User(BaseModel):
     username: str
     password: str
@@ -91,7 +45,7 @@ class AttendanceRecord(BaseModel):
     timestamp: datetime
     status: str
 
-# Database Setup
+# Database Setup (DEFINISI HANYA SEKALI)
 def init_db():
     conn = sqlite3.connect('attendance.db')
     c = conn.cursor()
@@ -110,41 +64,6 @@ def init_db():
     conn.close()
 
 # Initialize database
-init_db()
-
-# Database Models
-class User(BaseModel):
-    username: str
-    password: str
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class AttendanceRecord(BaseModel):
-    id: int
-    employee_name: str
-    timestamp: datetime
-    status: str
-
-# Database Setup
-def init_db():
-    conn = sqlite3.connect('attendance.db')
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS users
-        (username TEXT PRIMARY KEY, password TEXT)
-    ''')
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS attendance
-        (id INTEGER PRIMARY KEY AUTOINCREMENT,
-         employee_name TEXT,
-         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-         status TEXT)
-    ''')
-    conn.commit()
-    conn.close()
-
 init_db()
 
 # Authentication Functions
@@ -174,6 +93,20 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
 
 # API Endpoints
+@app.get("/")
+async def root():
+    return {
+        "message": "SIMSLIFE Face Recognition API",
+        "version": "1.0.0",
+        "endpoints": {
+            "docs": "/docs",
+            "token": "/token",
+            "capture": "/capture/{name}",
+            "attendance": "/attendance",
+            "all_attendance": "/attendance/all"
+        }
+    }
+
 @app.post("/token", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     # Simple authentication - replace with database check in production
@@ -206,15 +139,22 @@ async def capture_face(name: str, current_user: str = Depends(get_current_user))
             [sys.executable, str(script_path), name],
             capture_output=True,
             text=True,
-            cwd=str(root_dir)  # Set working directory explicitly
+            cwd=str(root_dir),
+            timeout=60  # Add timeout
         )
+        
         if result.returncode == 0:
-            return {"message": f"Face captured successfully for {name}"}
+            return {
+                "message": f"Face captured successfully for {name}",
+                "output": result.stdout
+            }
         else:
             raise HTTPException(
                 status_code=500,
                 detail=f"Face capture failed: {result.stderr}"
             )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Face capture timeout")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -236,24 +176,32 @@ async def mark_attendance(current_user: str = Depends(get_current_user)):
             [sys.executable, str(script_path)],
             capture_output=True,
             text=True,
-            cwd=str(root_dir)  # Set working directory explicitly
+            cwd=str(root_dir),
+            timeout=60  # Add timeout
         )
+        
         if result.returncode == 0:
             # Save attendance record
             conn = sqlite3.connect('attendance.db')
             c = conn.cursor()
+            employee_name = result.stdout.strip() or "Unknown"
             c.execute(
                 "INSERT INTO attendance (employee_name, status) VALUES (?, ?)",
-                (result.stdout.strip(), "present")
+                (employee_name, "present")
             )
             conn.commit()
             conn.close()
-            return {"message": "Attendance marked successfully"}
+            return {
+                "message": "Attendance marked successfully",
+                "employee": employee_name
+            }
         else:
             raise HTTPException(
                 status_code=500,
                 detail=f"Attendance marking failed: {result.stderr}"
             )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="Attendance recognition timeout")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -278,6 +226,13 @@ async def get_all_attendance(current_user: str = Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
 if __name__ == "__main__":
     import uvicorn
+    print("Starting SIMSLIFE Face Recognition API...")
+    print("API will be available at: http://localhost:8000")
+    print("API Documentation at: http://localhost:8000/docs")
     uvicorn.run(app, host="0.0.0.0", port=8000)

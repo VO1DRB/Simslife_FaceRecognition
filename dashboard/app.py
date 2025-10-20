@@ -57,75 +57,20 @@ def initialize_face_recognition():
 # Initialize face recognition on app start
 initialize_face_recognition()
 
-def delete_user_completely(username: str):
-    """
-    Delete user data completely from the system
-    """
-    try:
-        # 1. Delete user from API
-        api_response = api_call(f"/users/{username}", method="delete")
-        if not api_response or "status" not in api_response or api_response["status"] != "success":
-            print(f"Failed to delete user {username} from API")
-            return False
-
-        # 2. Get paths
-        root_dir = Path(__file__).parent.parent
-        dashboard_dir = Path(__file__).parent
-        
-        # 3. Delete from user_data.json files
-        json_files = [
-            root_dir / "user_data.json",
-            dashboard_dir / "user_data.json"
-        ]
-        
-        for json_path in json_files:
-            if json_path.exists():
-                try:
-                    # Read and update json
-                    with open(json_path, 'r') as f:
-                        data = json.load(f)
-                    if username in data:
-                        del data[username]
-                        # Write back
-                        with open(json_path, 'w') as f:
-                            json.dump(data, f, indent=4)
-                except Exception as e:
-                    print(f"Error with {json_path}: {e}")
-                    return False
-                    
-        # 4. Delete image files
-        attendance_dirs = [
-            root_dir / "Attendance_data",
-            dashboard_dir / "Attendance_data"
-        ]
-        
-        for att_dir in attendance_dirs:
-            if not att_dir.exists():
-                continue
-                
-            # Check for single image
-            single_img = att_dir / f"{username}.png"
-            if single_img.exists():
-                try:
-                    single_img.unlink()
-                except Exception as e:
-                    print(f"Error deleting single image: {e}")
-                    return False
-                
-            # Check for image folder
-            user_folder = att_dir / username
-            if user_folder.exists():
-                try:
-                    import shutil
-                    shutil.rmtree(user_folder)  # Recursively delete folder and contents
-                except Exception as e:
-                    print(f"Error deleting user folder: {e}")
-                    return False
-                    
-        return True
-    except Exception as e:
-        print(f"Error deleting user {username}: {e}")
-        return False
+# Import utility functions
+from pathlib import Path
+import json
+# Import from consolidated utils package
+from utils import (
+    delete_user_completely, 
+    get_user_data,
+    delete_user_image, 
+    get_user_images,
+    get_camera_feed,
+    analyze_face_image,
+    load_face_encodings,
+    get_orientation_instructions
+)
 
 # Configure page and initial session state
 st.set_page_config(
@@ -338,7 +283,8 @@ def get_registered_users():
 # Import modules
 from registration import show_user_registration, navigate_to
 from pages.attendance import show_attendance
-from user_management import show_user_management
+# Import the new user management implementation
+from new_user_management import show_user_management
 
 # Initialize session state
 if 'current_page' not in st.session_state:
@@ -871,185 +817,9 @@ def show_daily_statistics():
     else:
         st.info("Belum ada data absensi tersedia")
 
-def show_user_management():
-    st.header("User Management")
-    
-    # Get registered users from API
-    users_response = api_call("/users")
-    registered_users = []
-    if users_response and "data" in users_response:
-        registered_users = users_response["data"]
-
-    if registered_users:
-        # CSS untuk styling
-        st.markdown("""
-        <style>
-        .user-card {
-            padding: 1rem;
-            text-align: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin-bottom: 1rem;
-            height: 100%;
-        }
-        .user-name {
-            font-size: 1.2rem;
-            font-weight: bold;
-            margin: 0.5rem 0;
-            color: #2C3E50;
-            text-transform: capitalize;
-        }
-        .user-info {
-            color: #666;
-            font-size: 0.9rem;
-            margin: 0.3rem 0;
-        }
-        .status-active {
-            color: #4CAF50;
-            font-weight: bold;
-            margin-top: 0.5rem;
-        }
-        .image-type {
-            background-color: #f0f0f0;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            color: #666;
-            margin-top: 0.5rem;
-            display: inline-block;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
-        # Header dengan jumlah user
-        st.subheader(f"Daftar User Terdaftar (Total: {len(registered_users)})")
-        
-        # Pisahkan users berdasarkan tipe gambar
-        single_image_users = []
-        multiple_image_users = []
-        
-        for user in registered_users:
-            user_name = user["name"]
-            attendance_data_path = Path(__file__).parent.parent / "Attendance_data"
-            single_image = attendance_data_path / f"{user_name}.png"
-            folder_image = attendance_data_path / user_name / "center.png"
-            
-            if single_image.exists():
-                single_image_users.append({"user": user, "image_path": single_image})
-            elif folder_image.exists():
-                multiple_image_users.append({"user": user, "image_path": folder_image})
-        
-        # Tab untuk memisahkan Single Image dan Multiple Image
-        tab1, tab2 = st.tabs(["Single Image Users", "Multiple Image Users"])
-        
-        with tab1:
-            if single_image_users:
-                cols = st.columns(4)
-                for idx, item in enumerate(single_image_users):
-                    user = item["user"]
-                    image_path = item["image_path"]
-                    col = cols[idx % 4]
-                    with col:
-                        with st.container():
-                            # Card container
-                            st.markdown('<div class="user-card">', unsafe_allow_html=True)
-                            st.image(str(image_path), width=150)
-                            st.markdown(f'<div class="user-name">{user["name"]}</div>', unsafe_allow_html=True)
-                            st.markdown(f'<div class="user-info">{user.get("role", "Employee").title()}</div>', unsafe_allow_html=True)
-                            st.markdown(f'<div class="user-info">Shift: {user.get("shift", "Not Set").title()}</div>', unsafe_allow_html=True)
-                            st.markdown('<div class="image-type">Single Image</div>', unsafe_allow_html=True)
-                            st.markdown('<div class="status-active">● Active</div>', unsafe_allow_html=True)
-                                    
-                            # Delete button and confirmation
-                            if st.button("🗑️ Delete User", key=f"del_img_single_{user['name']}_{idx}"):
-                                st.warning(f"Are you sure you want to delete user {user['name']}? This will remove all data and images.")
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    if st.button("✅ Yes", key=f"confirm_del_single_{user['name']}_{idx}"):
-                                        # Delete user completely
-                                        success, message = delete_user_completely(user['name'])
-                                        if success:
-                                            st.success(f"✅ {message}")
-                                            time.sleep(1)  # Give time for the message to show
-                                            st.rerun()
-                                        else:
-                                            st.error(f"❌ {message}")
-                                with col2:
-                                    if st.button("❌ No", key=f"cancel_del_single_{user['name']}_{idx}"):
-                                        st.rerun()
-                            st.markdown('</div>', unsafe_allow_html=True)
-            else:
-                st.info("Tidak ada user dengan single image")
-                
-        with tab2:
-            if multiple_image_users:
-                cols = st.columns(4)  # Create 4 columns for the grid layout
-                
-                # Process each user
-                for idx, item in enumerate(multiple_image_users):
-                    user = item["user"]
-                    image_path = item["image_path"]
-                    folder_path = image_path.parent  # Get the parent folder for multiple images
-                    col = cols[idx % 4]
-                    with col:
-                        with st.container():
-                            st.markdown('<div class="user-card">', unsafe_allow_html=True)
-                            st.image(str(image_path), width=150)
-                            st.markdown(f'<div class="user-name">{user["name"]}</div>', unsafe_allow_html=True)
-                            st.markdown(f'<div class="user-info">{user.get("role", "Employee").title()}</div>', unsafe_allow_html=True)
-                            st.markdown(f'<div class="user-info">Shift: {user.get("shift", "Not Set").title()}</div>', unsafe_allow_html=True)
-                            st.markdown('<div class="image-type">Multiple Images</div>', unsafe_allow_html=True)
-                            st.markdown('<div class="status-active">● Active</div>', unsafe_allow_html=True)
-                            # Delete button and confirmation
-                            if st.button("🗑️ Delete Images", key=f"del_img_multi_{user['name']}_{idx}"):
-                                st.warning(f"Are you sure you want to delete images for {user['name']}?")
-                                col1, col2 = st.columns(2)
-                                with col1:
-                                    if st.button("✅ Yes", key=f"confirm_del_multi_{user['name']}_{idx}"):
-                                        try:
-                                            # Delete user completely
-                                            if delete_user_completely(user['name']):
-                                                st.success(f"✅ User {user['name']} deleted")
-                                            st.rerun()
-                                        except:
-                                            st.rerun()  # Silently handle errors
-                                with col2:
-                                    if st.button("❌ No", key=f"cancel_del_multi_{user['name']}_{idx}"):
-                                        st.rerun()
-                            st.markdown('</div>', unsafe_allow_html=True)
-            else:
-                st.info("Tidak ada user dengan multiple images")
-
-    else:
-        # Tampilkan pesan jika tidak ada user
-        col1, col2, col3 = st.columns([1,2,1])
-        with col2:
-            st.warning("Belum ada user terdaftar.")
-            st.markdown("Klik tombol di bawah untuk menambahkan user baru.")
-    
-    # Tombol registrasi
-    st.markdown("---")
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
-        st.markdown("""
-        <style>
-        div.stButton > button {
-            background-color: #4CAF50;
-            color: white;
-            padding: 15px;
-            font-size: 16px;
-            border-radius: 10px;
-            font-weight: bold;
-            border: none;
-            width: 100%;
-        }
-        div.stButton > button:hover {
-            background-color: #45a049;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        if st.button("➕ Tambah User Baru", width="stretch"):
-            navigate_to("Register New User")
+# The show_user_management function is now imported from new_user_management.py
+# The user management functionality has been moved to new_user_management.py
+# This provides improved UI and functionality for managing user images
 
 class RegistrationError(Exception):
     """Custom exception for registration errors"""

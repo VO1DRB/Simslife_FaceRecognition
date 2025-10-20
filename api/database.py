@@ -413,3 +413,59 @@ class AttendanceDB:
         finally:
             if 'conn' in locals():
                 conn.close()
+                
+    def delete_user(self, username: str):
+        """
+        Delete a user from the system:
+        1. Remove from the database
+        2. Delete image files
+        
+        Returns dict with status and message
+        """
+        try:
+            # 1. Delete from database
+            conn = sqlite3.connect(str(self.db_path))
+            c = conn.cursor()
+            
+            # Delete from users table
+            c.execute('DELETE FROM users WHERE username = ?', (username,))
+            
+            # Mark attendance records as inactive
+            c.execute('''
+                UPDATE attendance
+                SET status = 'user_deleted'
+                WHERE employee_name = ?
+            ''', (username,))
+            
+            conn.commit()
+            conn.close()
+            
+            # 2. Delete user images
+            # This is actually handled by the client side function delete_user_completely
+            # But let's make sure to clean up server-side files too
+            
+            # Check for single image
+            single_img = self.users_path / f"{username}.png"
+            if single_img.exists():
+                try:
+                    os.remove(single_img)
+                    print(f"API: Deleted single image: {single_img}")
+                except Exception as e:
+                    print(f"API: Error deleting image {single_img}: {e}")
+            
+            # Check for image folder
+            user_folder = self.users_path / username
+            if user_folder.exists() and user_folder.is_dir():
+                try:
+                    import shutil
+                    shutil.rmtree(user_folder)
+                    print(f"API: Deleted folder: {user_folder}")
+                except Exception as e:
+                    print(f"API: Error deleting folder {user_folder}: {e}")
+            
+            return {"status": "success", "message": f"User '{username}' deleted successfully"}
+        except Exception as e:
+            print(f"API: Error in delete_user: {e}")
+            import traceback
+            print(traceback.format_exc())
+            return {"status": "error", "message": str(e)}

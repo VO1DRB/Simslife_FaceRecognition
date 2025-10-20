@@ -50,5 +50,17 @@
     "GENGKIPIK": {
         "shift": "night",
         "role": "employee"
+    },
+    "jua": {
+        "shift": "morning",
+        "role": "employee"
+    },
+    "po": {
+        "shift": "morning",
+        "role": "employee"
+    },
+    "lpl": {
+        "shift": "morning",
+        "role": "employee"
     }
 }

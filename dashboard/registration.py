@@ -44,15 +44,14 @@ def check_user_exists(name: str) -> bool:
         dashboard_user_folder.exists()
     ])
 
-def prepare_registration(user_data: dict) -> tuple[bool, str, subprocess.Popen]:
+def prepare_registration(user_data: dict) -> tuple[bool, str, None]:
     """
-    Prepare and start the registration process
-    Returns: (success, message, process)
+    Prepare the registration process (integrated version)
+    Returns: (success, message, None)
     """
     try:
         # Get root project directory
         root_dir = Path(__file__).parent.parent.resolve()
-        script_path = root_dir / "initial_data_capture.py"
         
         # Save user data for shift management
         user_data_file = root_dir / "user_data.json"
@@ -75,10 +74,6 @@ def prepare_registration(user_data: dict) -> tuple[bool, str, subprocess.Popen]:
         except Exception as e:
             st.warning(f"Warning: Could not save user shift data: {str(e)}")
         
-        # Validasi script exists
-        if not script_path.exists():
-            return False, f"❌ Script registrasi tidak ditemukan di: {script_path}", None
-            
         # Cek user exists
         if check_user_exists(user_data['name']):
             return False, f"❌ User dengan nama '{user_data['name']}' sudah terdaftar!", None
@@ -87,110 +82,41 @@ def prepare_registration(user_data: dict) -> tuple[bool, str, subprocess.Popen]:
         attendance_dir = root_dir / "Attendance_data"
         attendance_dir.mkdir(exist_ok=True)
         
-        # Remove any data from dashboard directory if it exists
-        dashboard_attendance_dir = Path(__file__).parent / "Attendance_data"
-        if dashboard_attendance_dir.exists():
-            dashboard_user_path = dashboard_attendance_dir / user_data['name']
-            if dashboard_user_path.exists():
-                import shutil
-                shutil.rmtree(dashboard_user_path)
+        # Create user directory
+        user_dir = attendance_dir / user_data['name']
+        user_dir.mkdir(exist_ok=True)
         
-        # Set up environment with correct paths
-        env = os.environ.copy()
-        env['PYTHONPATH'] = str(root_dir)
-        
-        # Start process with proper working directory
-        process = subprocess.Popen(
-            [sys.executable, str(script_path), user_data['name']],
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE,
-            universal_newlines=True,
-            cwd=str(root_dir),
-            env=env)
-            
-        # Tunggu sebentar untuk memastikan process mulai
-        time.sleep(1)
-        
-        if process.poll() is not None:  # Process gagal dimulai
-            return False, "❌ Gagal memulai proses registrasi", None
-            
-        return True, "✅ Proses registrasi dimulai!", process
+        # Initialize registration state
+        return True, "✅ Proses registrasi dimulai! Silakan ikuti instruksi selanjutnya.", None
         
     except Exception as e:
         return False, f"❌ Error: {str(e)}", None
 
-def get_registration_status(process: subprocess.Popen) -> tuple[bool, str]:
+def check_registration_complete() -> tuple[bool, str]:
     """
-    Check registration process status from running process
-    Returns: (is_running, status_message)
+    Check if registration is complete by verifying all required images exist
+    Returns: (is_complete, status_message)
     """
-    if not process:
-        return False, "❌ Process tidak ditemukan"
+    if 'registration_state' not in st.session_state or not st.session_state.registration_state['user_data']:
+        return False, "❌ No active registration"
     
-    # Check if process was terminated (camera closed)
-    poll_result = process.poll()
-    if poll_result is not None:
-        # Process ended
-        if poll_result == 0:
-            # Check if all required images exist
-            root_dir = Path(__file__).parent.parent
-            user_folder = root_dir / "Attendance_data" / st.session_state.registration_state['user_data']['name']
-            if user_folder.exists() and all(
-                (user_folder / f"{pose}.png").exists() 
-                for pose in ['center', 'left', 'right']
-            ):
-                # Reset the registration form
-                st.session_state.registration_state = {
-                    'is_registering': False,
-                    'current_step': 0,
-                    'user_data': None,
-                    'process': None,
-                    'error': None
-                }
-                return False, "✅ Registrasi berhasil!"
-            else:
-                return False, "❌ Registrasi gagal: File gambar tidak lengkap"
+    username = st.session_state.registration_state['user_data']['name']
+    root_dir = Path(__file__).parent.parent
+    user_folder = root_dir / "Attendance_data" / username
+    
+    # Check if all required images exist
+    if user_folder.exists():
+        missing_poses = []
+        for pose in ['center', 'left', 'right']:
+            if not (user_folder / f"{pose}.png").exists():
+                missing_poses.append(pose)
+        
+        if not missing_poses:
+            return True, "✅ Registrasi berhasil!"
         else:
-            stderr = process.stderr.read()
-            return False, f"❌ Error: {stderr if stderr else 'Unknown error'}"
-    
-    # Process still running
-    try:
-        # Baca output tanpa blocking
-        stdout = process.stdout.readline().strip()
-        stderr = process.stderr.readline().strip()
-        
-        # Update status based on output
-        if stdout:
-            if "center image captured" in stdout.lower():
-                return True, "✅ Foto tengah berhasil diambil"
-            elif "left image captured" in stdout.lower():
-                return True, "✅ Foto kiri berhasil diambil"
-            elif "right image captured" in stdout.lower():
-                return True, "✅ Foto kanan berhasil diambil"
-            elif "Look at CENTER" in stdout:
-                return True, "🎯 Lihat ke tengah"
-            elif "TURN LEFT" in stdout:
-                return True, "👈 Hadap ke kiri"
-            elif "TURN RIGHT" in stdout:
-                return True, "👉 Hadap ke kanan"
-            elif "Get ready" in stdout:
-                return True, "⏳ Bersiap untuk foto..."
-            elif "All images captured" in stdout:
-                return False, "✅ Registrasi berhasil!"
-            else:
-                return True, stdout
-        
-        # Cek error
-        if stderr:
-            return False, f"❌ Error: {stderr}"
-        
-        # Process masih jalan tapi tidak ada output baru
-        return True, "⏳ Memproses..."
-        
-    except Exception as e:
-        # Error reading output but process still running
-        return True, "⏳ Memproses..."
+            return False, f"⏳ Masih perlu foto: {', '.join(missing_poses)}"
+    else:
+        return False, "⏳ Persiapan registrasi..."
 
 def render_registration_form() -> dict:
     """
@@ -270,6 +196,9 @@ def show_user_registration():
     """
     Handle user registration process
     """
+    # Import all necessary functions from utils package
+    from utils import get_camera_feed, capture_and_save_face, get_orientation_instructions
+    
     st.header("Register New User")
     st.write("Gunakan halaman ini untuk mendaftarkan user baru ke sistem face recognition.")
     
@@ -277,17 +206,84 @@ def show_user_registration():
     
     # Jika sedang dalam proses registrasi
     if reg_state['is_registering']:
+        # Show registration instructions
         render_registration_progress()
         
-        # Check process status
-        is_running, status = get_registration_status(reg_state['process'])
-        if not is_running:
-            # Process finished
-            if "berhasil" in status.lower():
-                reg_state['current_step'] = 4  # Final step
+        # Create columns for layout
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            # Get camera feed
+            camera_image = get_camera_feed()
+            
+            # Show capture button based on current step
+            current_step = reg_state['current_step']
+            if camera_image is not None:
+                # Convert the image from bytes to OpenCV format
+                import cv2
+                import numpy as np
+                
+                bytes_data = camera_image.getvalue()
+                img_array = np.frombuffer(bytes_data, np.uint8)
+                image = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                
+                # Determine pose based on current step
+                poses = ['center', 'left', 'right']
+                if current_step > 0 and current_step <= len(poses):
+                    pose = poses[current_step - 1]
+                    
+                    # Button to capture the current pose
+                    if st.button(f"Capture {pose.title()} Image", key=f"capture_{pose}"):
+                        # Get user folder path
+                        root_dir = Path(__file__).parent.parent
+                        user_folder = root_dir / "Attendance_data" / reg_state['user_data']['name']
+                        
+                        # Save captured image
+                        success = capture_and_save_face(image, user_folder, pose)
+                        
+                        if success:
+                            st.success(f"✅ {pose.title()} image captured successfully!")
+                            # Move to next step
+                            reg_state['current_step'] += 1
+                            
+                            # Check if registration is complete
+                            is_complete, _ = check_registration_complete()
+                            if is_complete:
+                                reg_state['current_step'] = 4  # Final step
+                                st.rerun()
+                            elif reg_state['current_step'] > 3:
+                                reg_state['current_step'] = 4  # Final step
+                                st.rerun()
+                        else:
+                            st.error(f"❌ Failed to capture {pose} image. Please try again.")
+        
+        with col2:
+            st.subheader("Instructions")
+            
+            # Display instructions based on current step
+            instruction = get_orientation_instructions(reg_state['current_step'] - 1)
+            st.info(instruction)
+            
+            # Option to cancel registration
+            if st.button("Cancel Registration", type="secondary"):
+                # Reset registration state
+                st.session_state.registration_state = {
+                    'is_registering': False,
+                    'current_step': 0,
+                    'user_data': None,
+                    'process': None,
+                    'error': None
+                }
+                st.rerun()
+        
+        # Check if registration is complete (all images captured)
+        if reg_state['current_step'] == 4:
+            is_complete, status = check_registration_complete()
+            if is_complete:
                 st.success(status)
-                time.sleep(2)  # Show success message for 2 seconds
-                # Reset form for next registration
+                # Reset form for next registration after delay
+                import time
+                time.sleep(1)  # Show success message briefly
                 st.session_state.registration_state = {
                     'is_registering': False,
                     'current_step': 0,
@@ -297,20 +293,9 @@ def show_user_registration():
                 }
                 st.rerun()
             else:
-                reg_state['error'] = status
-                reg_state['is_registering'] = False
-        
-        # Handle error
-        if reg_state['error']:
-            st.error(f"❌ {reg_state['error']}")
-            if st.button("Coba Lagi", width="stretch"):
-                st.session_state.registration_state = {
-                    'is_registering': False,
-                    'current_step': 0,
-                    'user_data': None,
-                    'process': None,
-                    'error': None
-                }
+                st.warning("Registration incomplete. Please capture all required images.")
+                # Reset to step 1 to start captures again
+                reg_state['current_step'] = 1
                 st.rerun()
                 
     # Jika belum memulai registrasi
@@ -323,15 +308,15 @@ def show_user_registration():
                 return
                 
             # Start registration
-            success, message, process = prepare_registration(user_data)
+            success, message, _ = prepare_registration(user_data)
             
             if success:
                 # Update state
                 st.session_state.registration_state = {
                     'is_registering': True,
-                    'current_step': 0,
+                    'current_step': 1,  # Start with center capture
                     'user_data': user_data,
-                    'process': process,
+                    'process': None,
                     'error': None
                 }
                 st.rerun()
