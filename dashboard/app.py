@@ -416,7 +416,7 @@ def show_overview():
                             }
                         ),
                         hide_index=True,
-                        width="stretch"
+                        width=900
                     )
                 
                 # Format check-in time
@@ -437,7 +437,7 @@ def show_overview():
                         'actual_shift': 'Shift Aktual',
                         'status': 'Status'
                     }),
-                    width="stretch"
+                    width=900
                 )
             else:
                 st.info("Belum ada absensi untuk shift pagi")
@@ -492,7 +492,7 @@ def show_overview():
                         'actual_shift': 'Shift Aktual',
                         'status': 'Status'
                     }),
-                    width="stretch"
+                    width=900
                 )
             else:
                 st.info("No night shift attendance yet")
@@ -580,7 +580,7 @@ def show_daily_statistics():
                 help="Pilih periode data yang akan diexport"
             )
             
-            if st.button("📥 Download CSV", width="stretch"):
+            if st.button("📥 Download CSV", width=900):
                 try:
                     # Filter data berdasarkan periode
                     if period == "Hari Ini":
@@ -672,7 +672,7 @@ def show_daily_statistics():
                 st.dataframe(import_df.head())
                 
                 # Confirm import
-                if st.button("✅ Konfirmasi Import", width="stretch"):
+                if st.button("✅ Konfirmasi Import", width=900):
                     # Save to attendance directory
                     filename = f"Attendance_{datetime.now().strftime('%d_%m_%y')}.csv"
                     success, result = export_attendance_to_csv(import_df, filename)
@@ -768,13 +768,13 @@ def show_daily_statistics():
         st.dataframe(
             weekly_df,
             column_config={
-                'Tanggal': st.column_config.TextColumn('Tanggal', width='medium'),
-                'Hari': st.column_config.TextColumn('Hari', width='small'),
+                'Tanggal': st.column_config.TextColumn('Tanggal', width=700),
+                'Hari': st.column_config.TextColumn('Hari', width=500),
                 'Total Hadir': st.column_config.NumberColumn('Total Hadir', format='%d'),
                 'Tepat Waktu': st.column_config.NumberColumn('Tepat Waktu', format='%d'),
                 'Terlambat': st.column_config.NumberColumn('Terlambat', format='%d')
             },
-            width="stretch",
+            width=900,
             hide_index=True
         )
         
@@ -800,7 +800,7 @@ def show_daily_statistics():
             if not filtered_df.empty:
                 st.dataframe(
                     filtered_df.sort_values(by=date_column, ascending=False),
-                    width="stretch"
+                    width=900
                 )
                 
                 # Summary metrics
