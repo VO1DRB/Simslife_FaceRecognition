@@ -175,12 +175,23 @@ def mouse_callback(event, x, y, flags, param):
 
 #Camera capture 
 cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-# Create window and set mouse callback
-cv2.namedWindow('Attendance System')
-button_pos = (10, 440, 150, 30)  # x, y, width, height
+# Get screen resolution
+screen = cv2.getWindowImageRect("Attendance System")
+cv2.namedWindow('Attendance System', cv2.WINDOW_NORMAL)
+cv2.setWindowProperty('Attendance System', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+# Get the actual window size after setting fullscreen
+window_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+window_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+# Position the button at the bottom left with some padding
+button_width = 150
+button_height = 30
+padding = 20
+button_pos = (padding, window_height - button_height - padding, button_width, button_height)
+
+# Set mouse callback
 cv2.setMouseCallback('Attendance System', mouse_callback, button_pos)
 
 last_detected_name = None
@@ -285,9 +296,20 @@ while running:
                     cv2.putText(img, status, (left + 6, bottom - 6),
                             cv2.FONT_HERSHEY_COMPLEX, 0.6, (255, 255, 255), 1)
 
+    # Resize image to fit the screen while maintaining aspect ratio
+    screen_width = cv2.getWindowImageRect('Attendance System')[2]
+    screen_height = cv2.getWindowImageRect('Attendance System')[3]
+    
+    # Calculate scaling factor
+    h, w = img.shape[:2]
+    scale = min(screen_width/w, screen_height/h)
+    
+    # Resize image
+    img = cv2.resize(img, (int(w*scale), int(h*scale)))
+    
     # Display the result
     cv2.imshow('Attendance System', img)
-    if cv2.waitKey(1) & 0xFF == 27:  # ESC
+    if cv2.waitKey(1) & 0xFF == 27:  # ESC to exit fullscreen
         break
 
 cap.release()
