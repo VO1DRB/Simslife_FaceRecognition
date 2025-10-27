@@ -3,7 +3,7 @@ from datetime import datetime, time
 import os
 from pathlib import Path
 import sqlite3
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 class AttendanceDB:
     def __init__(self):
@@ -59,7 +59,7 @@ class AttendanceDB:
         conn.commit()
         conn.close()
         
-    def validate_shift_time(self, check_time: time, employee_name: str) -> tuple[str, str]:
+    def validate_shift_time(self, check_time: time, employee_name: str) -> Tuple[str, str]:
         """Validate check time and return shift and status based on employee's registered shift"""
         morning_start = time(8, 0)
         morning_end = time(16, 0)
