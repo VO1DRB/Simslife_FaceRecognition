@@ -179,13 +179,21 @@ cap = cv2.VideoCapture(0)
 # Create window first
 cv2.namedWindow('Attendance System', cv2.WINDOW_NORMAL)
 
-# Get screen dimensions using a different approach
-import ctypes
-user32 = ctypes.windll.user32
-screen_width = user32.GetSystemMetrics(0)
-screen_height = user32.GetSystemMetrics(1)
+# Create a temporary window to get screen dimensions
+temp_window = cv2.namedWindow('temp', cv2.WINDOW_NORMAL)
+cv2.setWindowProperty('temp', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+screen_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+screen_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+cv2.destroyWindow('temp')
+
+# If we couldn't get proper dimensions, use default resolution
+if screen_width <= 0 or screen_height <= 0:
+    screen_width = 1920
+    screen_height = 1080
+    print("Warning: Could not detect screen size, using default 1920x1080")
 
 # Set window to fullscreen
+cv2.namedWindow('Attendance System', cv2.WINDOW_NORMAL)
 cv2.setWindowProperty('Attendance System', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
 # Calculate button position based on screen dimensions
