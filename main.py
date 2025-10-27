@@ -173,22 +173,29 @@ def mouse_callback(event, x, y, flags, param):
             global running
             running = False
 
-#Camera capture 
+# Camera capture 
 cap = cv2.VideoCapture(0)
 
-# Get screen resolution
-screen = cv2.getWindowImageRect("Attendance System")
+# Create window first
 cv2.namedWindow('Attendance System', cv2.WINDOW_NORMAL)
+
+# Get screen dimensions using a different approach
+import ctypes
+user32 = ctypes.windll.user32
+screen_width = user32.GetSystemMetrics(0)
+screen_height = user32.GetSystemMetrics(1)
+
+# Set window to fullscreen
 cv2.setWindowProperty('Attendance System', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
-# Get the actual window size after setting fullscreen
-window_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-window_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+# Calculate button position based on screen dimensions
+window_width = screen_width
+window_height = screen_height
 
-# Position the button at the bottom left with some padding
-button_width = 150
-button_height = 30
-padding = 20
+# Position the button in the bottom left corner with padding
+button_width = 300  # Much wider
+button_height = 80  # Much taller
+padding = 50  # More padding
 button_pos = (padding, window_height - button_height - padding, button_width, button_height)
 
 # Set mouse callback
@@ -297,18 +304,37 @@ while running:
                             cv2.FONT_HERSHEY_COMPLEX, 0.6, (255, 255, 255), 1)
 
     # Resize image to fit the screen while maintaining aspect ratio
-    screen_width = cv2.getWindowImageRect('Attendance System')[2]
-    screen_height = cv2.getWindowImageRect('Attendance System')[3]
-    
-    # Calculate scaling factor
     h, w = img.shape[:2]
-    scale = min(screen_width/w, screen_height/h)
+    scale = min(window_width/w, window_height/h)
     
     # Resize image
     img = cv2.resize(img, (int(w*scale), int(h*scale)))
     
+    # Create a black canvas of screen size
+    canvas = np.zeros((window_height, window_width, 3), dtype=np.uint8)
+    
+    # Calculate position to center the image
+    y_offset = (window_height - int(h*scale)) // 2
+    x_offset = (window_width - int(w*scale)) // 2
+    
+    # Place the resized image in the center of the canvas
+    canvas[y_offset:y_offset+int(h*scale), x_offset:x_offset+int(w*scale)] = img
+    
+    # Draw registration button on the canvas
+    x, y, w, h = button_pos
+    cv2.rectangle(canvas, (x, y), (x + w, y + h), (0, 255, 0), cv2.FILLED)
+    # Calculate text size and position to center it in the button
+    font_scale = 1.5
+    thickness = 3
+    text = "Register New"
+    (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+    text_x = x + (w - text_width) // 2
+    text_y = y + (h + text_height) // 2
+    cv2.putText(canvas, text, (text_x, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)
+    
     # Display the result
-    cv2.imshow('Attendance System', img)
+    cv2.imshow('Attendance System', canvas)
     if cv2.waitKey(1) & 0xFF == 27:  # ESC to exit fullscreen
         break
 
