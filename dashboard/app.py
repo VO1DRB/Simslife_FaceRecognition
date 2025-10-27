@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 import face_recognition
 from attendance_tracker import AttendanceTracker
+from typing import Tuple
 
 # Initialize face recognition system
 def initialize_face_recognition():
@@ -825,7 +826,7 @@ class RegistrationError(Exception):
     """Custom exception for registration errors"""
     pass
 
-def validate_user_input(user_data: dict) -> tuple[bool, str]:
+def validate_user_input(user_data: dict) -> Tuple[bool, str]:
     """
     Validate all user registration input
     Returns: (is_valid, error_message)
@@ -861,7 +862,7 @@ def check_user_exists(name: str) -> bool:
     
     return user_file.exists() or user_folder.exists()
 
-def prepare_registration(user_data: dict) -> tuple[bool, str, subprocess.Popen]:
+def prepare_registration(user_data: dict) -> Tuple[bool, str, subprocess.Popen]:
     """
     Prepare and start the registration process
     Returns: (success, message, process)
@@ -895,7 +896,7 @@ def prepare_registration(user_data: dict) -> tuple[bool, str, subprocess.Popen]:
     except Exception as e:
         return False, f"❌ Error: {str(e)}", None
 
-def get_registration_status(process: subprocess.Popen) -> tuple[bool, str]:
+def get_registration_status(process: subprocess.Popen) -> Tuple[bool, str]:
     """
     Check registration process status from running process
     Returns: (is_running, status_message)
