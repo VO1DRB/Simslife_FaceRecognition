@@ -200,11 +200,23 @@ cv2.setWindowProperty('Attendance System', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_F
 window_width = screen_width
 window_height = screen_height
 
-# Position the button in the bottom left corner with padding
-button_width = 300  # Much wider
-button_height = 80  # Much taller
-padding = 50  # More padding
+# Detect platform and set button size accordingly
+import platform
+if platform.system() == 'Linux':  # Jetson Nano
+    button_width = 160  # Smaller width for Jetson
+    button_height = 50  # Smaller height for Jetson
+    padding = 20  # Less padding for Jetson
+    font_scale = 0.8  # Smaller text for Jetson
+else:  # Windows or other platforms
+    button_width = 300  # Larger for desktop
+    button_height = 80  # Larger for desktop
+    padding = 50  # More padding for desktop
+    font_scale = 1.5  # Larger text for desktop
+
+# Position the button in the bottom left corner
 button_pos = (padding, window_height - button_height - padding, button_width, button_height)
+# Store font_scale for later use
+button_font_scale = font_scale
 
 # Set mouse callback
 cv2.setMouseCallback('Attendance System', mouse_callback, button_pos)
@@ -332,14 +344,13 @@ while running:
     x, y, w, h = button_pos
     cv2.rectangle(canvas, (x, y), (x + w, y + h), (0, 255, 0), cv2.FILLED)
     # Calculate text size and position to center it in the button
-    font_scale = 1.5
-    thickness = 3
+    thickness = 2 if platform.system() == 'Linux' else 3  # Thinner text on Jetson
     text = "Register New"
-    (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+    (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, button_font_scale, thickness)
     text_x = x + (w - text_width) // 2
     text_y = y + (h + text_height) // 2
     cv2.putText(canvas, text, (text_x, text_y),
-                cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)
+                cv2.FONT_HERSHEY_SIMPLEX, button_font_scale, (255, 255, 255), thickness)
     
     # Display the result
     cv2.imshow('Attendance System', canvas)
