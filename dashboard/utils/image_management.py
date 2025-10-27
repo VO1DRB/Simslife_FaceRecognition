@@ -1,8 +1,9 @@
 import json
 from pathlib import Path
 import streamlit as st
+from typing import Tuple
 
-def delete_user_image(username: str, image_type: str = None, delete_all: bool = False) -> tuple[bool, str]:
+def delete_user_image(username: str, image_type: str = None, delete_all: bool = False) -> Tuple[bool, str]:
     """
     Delete specific user image(s) without removing the entire user.
     This is useful for deleting individual pose images from multiple image users.
@@ -13,7 +14,7 @@ def delete_user_image(username: str, image_type: str = None, delete_all: bool = 
         delete_all: If True, delete all images but keep the user entry
         
     Returns:
-        tuple[bool, str]: (success, message)
+        Tuple[bool, str]: (success, message)
     """
     try:
         # Get the paths

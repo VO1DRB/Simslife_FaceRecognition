@@ -1,4 +1,5 @@
 from datetime import datetime, time
+from typing import Tuple
 
 def is_within_shift_hours(current_time: datetime, shift: str) -> bool:
     """Check if current time is within shift hours"""
@@ -10,12 +11,12 @@ def is_within_shift_hours(current_time: datetime, shift: str) -> bool:
         return 17 <= current_hour < 22
     return False
 
-def get_shift_status(checkin_time: datetime, current_time: datetime = None) -> tuple[str, str]:
+def get_shift_status(checkin_time: datetime, current_time: datetime = None) -> Tuple[str, str]:
     """
     Get the shift and attendance status based on check-in time
     
     Returns:
-        tuple[str, str]: (shift_type, status)
+        Tuple[str, str]: (shift_type, status)
         shift_type: "morning" or "night"
         status: "early", "ontime", "late", or "wrong_shift"
     """

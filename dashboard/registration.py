@@ -4,6 +4,7 @@ import subprocess
 import time
 import sys
 import os
+from typing import Tuple
 
 def navigate_to(page_name: str):
     """
@@ -44,7 +45,7 @@ def check_user_exists(name: str) -> bool:
         dashboard_user_folder.exists()
     ])
 
-def prepare_registration(user_data: dict) -> tuple[bool, str, None]:
+def prepare_registration(user_data: dict) -> Tuple[bool, str, None]:
     """
     Prepare the registration process (integrated version)
     Returns: (success, message, None)
@@ -92,7 +93,7 @@ def prepare_registration(user_data: dict) -> tuple[bool, str, None]:
     except Exception as e:
         return False, f"❌ Error: {str(e)}", None
 
-def check_registration_complete() -> tuple[bool, str]:
+def check_registration_complete() -> Tuple[bool, str]:
     """
     Check if registration is complete by verifying all required images exist
     Returns: (is_complete, status_message)

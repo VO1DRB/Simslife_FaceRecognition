@@ -5,6 +5,7 @@ import face_recognition
 import time
 from pathlib import Path
 import os
+from typing import Tuple
 
 def get_camera_feed():
     """

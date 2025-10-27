@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
+from typing import Tuple
 
 __all__ = ['delete_user_completely', 'get_user_data']
 
-def delete_user_completely(username: str) -> tuple[bool, str]:
+def delete_user_completely(username: str) -> Tuple[bool, str]:
     """
     Delete user data completely from the system, including:
     - API database entry
@@ -12,7 +13,7 @@ def delete_user_completely(username: str) -> tuple[bool, str]:
     - Image folders
     
     Returns:
-        tuple[bool, str]: (success, message)
+        Tuple[bool, str]: (success, message)
     """
     print(f"Starting delete for user: {username}")
     try:
