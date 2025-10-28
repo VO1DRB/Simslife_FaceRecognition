@@ -9,6 +9,7 @@ import warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='pkg_resources')
 warnings.filterwarnings('ignore', message='pkg_resources is deprecated as an API')
 
+import platform
 import face_recognition
 from datetime import datetime
 from datetime import date
@@ -165,8 +166,37 @@ def run_attendance_window():
                     print(f"Error running registration: {e}")
                 nonlocal_running[0] = False
 
-    # Camera capture
-    cap = cv2.VideoCapture(0)
+    # Camera capture with better error handling for Jetson Nano
+    def init_camera():
+        # Try different camera indices and APIs
+        if platform.system() == 'Linux':  # Jetson Nano
+            # Try CSI camera first (Jetson specific)
+            cap = cv2.VideoCapture(os.environ.get('CAMERA_DEV', 'nvarguscamerasrc ! video/x-raw(memory:NVMM), width=1280, height=720, format=(string)NV12, framerate=30/1 ! nvvidconv ! video/x-raw, format=(string)BGRx ! videoconvert ! video/x-raw, format=(string)BGR ! appsink'), cv2.CAP_GSTREAMER)
+            if cap is not None and cap.isOpened():
+                print("Successfully opened CSI camera")
+                return cap
+                
+            # Try V4L2 devices
+            for dev in range(10):  # Try multiple video devices
+                dev_path = f"/dev/video{dev}"
+                if os.path.exists(dev_path):
+                    print(f"Trying {dev_path}...")
+                    cap = cv2.VideoCapture(dev)
+                    if cap is not None and cap.isOpened():
+                        print(f"Successfully opened camera at {dev_path}")
+                        return cap
+        else:  # Windows or other platforms
+            cap = cv2.VideoCapture(0)
+            if cap is not None and cap.isOpened():
+                return cap
+        
+        print("Error: Could not open any camera. Please check:")
+        print("1. Camera is properly connected")
+        print("2. Camera permissions (try: sudo chmod 666 /dev/video*)")
+        print("3. Camera is not in use by another application")
+        exit(1)
+    
+    cap = init_camera()
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
